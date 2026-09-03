@@ -138,8 +138,10 @@ https://<machine>.<tailnet>.ts.net/deck
 https://<machine>.<tailnet>.ts.net:9797/
 ```
 
-`tailscale status` shows the machine's name. Two things have to agree for this to work,
-and the installer sets both:
+Before this can work, your tailnet needs **MagicDNS** and **HTTPS certificates** enabled
+(admin console, DNS page); `tailscale serve` names the missing setting if they are not.
+`tailscale status` shows the machine's name. Two things then have to agree, and the
+installer sets both:
 
 1. **Serve routes.** `tailscale serve --bg --set-path=/deck http://127.0.0.1:9798` and
    `tailscale serve --bg --https=9797 http://127.0.0.1:9798`. Remove them with the same
@@ -152,6 +154,34 @@ and the installer sets both:
    port form) in the LaunchAgent. If you front the bridge with something else, set those
    yourself. When they are missing the page loads, then tells you exactly which variable
    to set.
+
+### Setting it up by hand
+
+If you install with `AGENTDECK_CONFIGURE_TAILSCALE=off`, front the bridge with a
+different TLS proxy, or want only one of the two URL forms, do the installer's two steps
+yourself. Take the hostname from `tailscale status --json | grep -m1 DNSName` (drop the
+trailing dot).
+
+```bash
+# 1. Tell the bridge which addresses to answer for, then reinstall so the LaunchAgent
+#    carries them. Use only the line(s) for the form(s) you will publish.
+AGENTDECK_PUBLIC_HOST=studio.tail1234.ts.net \
+AGENTDECK_ALLOWED_ORIGINS=https://studio.tail1234.ts.net:9797 \
+AGENTDECK_CONFIGURE_TAILSCALE=off ./Scripts/install.sh
+
+# 2. Publish. Path form on the standard HTTPS port, port form on its own port, or both.
+tailscale serve --bg --set-path=/deck http://127.0.0.1:9798
+tailscale serve --bg --https=9797 http://127.0.0.1:9798
+tailscale serve status
+```
+
+For a foreground run, put the same two variables in front of `swift run AgentDeckBridge`.
+`AGENTDECK_PUBLIC_HOST` covers an address with no port; anything with a port, or without
+TLS, goes in `AGENTDECK_ALLOWED_ORIGINS` as a full `scheme://host:port` origin,
+comma-separated. Check the result with
+`curl -s https://studio.tail1234.ts.net/deck/api/snapshot`: JSON means both steps agree,
+`403 origin_rejected` means step 1 does not match the address you used. Undo with
+`tailscale serve --set-path=/deck off` and `tailscale serve --https=9797 off`.
 
 The bridge port and the Serve port must differ: Serve binds `<tailnet-ip>:9797` itself,
 and a bridge on the same port fails with `EADDRINUSE`, invisibly, because `lsof` does not
