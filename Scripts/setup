@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# One-time Mac setup: verify external prerequisites, pull the heading model, then let the
+# normal installer provision the binary, launchd, Herdr presentation, and Tailscale.
+
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODEL="${AGENTDECK_MODEL:-gemma4:12b}"
+
+die() {
+    echo "setup: $*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'USAGE'
+usage: Scripts/setup
+
+Verify the external Mac prerequisites, pull AgentDeck's Ollama heading model, then
+build and provision the bridge, launchd job, Herdr sidebar, and Tailscale routes.
+
+Required: Xcode and Herdr. Recommended: Ollama for generated card headings.
+Optional: Tailscale to reach the deck from other devices, and a Developer ID
+Application identity so the Full Disk Access grant for Claude quota survives
+rebuilds. Missing optional pieces are reported and skipped, not fatal.
+Run Scripts/install.sh for subsequent code updates.
+USAGE
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+esac
+if (( $# > 0 )); then
+    usage >&2
+    die "unknown argument: $1"
+fi
+
+require() {
+    command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+if [[ -d /Applications/Xcode.app/Contents/Developer ]]; then
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+fi
+
+for command in herdr security plutil xcrun python3; do
+    require "$command"
+done
+
+xcrun --find swift >/dev/null || die "Swift is unavailable; install Xcode first"
+herdr --version
+
+if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+    echo "==> Tailscale is connected; the deck will be published to your tailnet"
+else
+    echo "note: Tailscale is not installed or not connected; the deck stays on 127.0.0.1"
+    echo "      Install and sign in to Tailscale, then rerun Scripts/install.sh to publish it."
+    export AGENTDECK_CONFIGURE_TAILSCALE="${AGENTDECK_CONFIGURE_TAILSCALE:-off}"
+fi
+
+identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+if [[ "$identities" != *"Developer ID Application:"* ]]; then
+    echo "note: no Developer ID Application identity; the installer will sign ad hoc"
+fi
+
+if [[ "$MODEL" == "off" ]]; then
+    echo "==> AGENTDECK_MODEL=off: no headings model will be pulled"
+elif ! command -v ollama >/dev/null 2>&1 || ! ollama list >/dev/null 2>&1; then
+    echo "note: Ollama is not installed or not running; cards will use Herdr's titles"
+    echo "      Install Ollama, run 'ollama pull $MODEL', and the bridge picks it up live."
+elif ollama show "$MODEL" >/dev/null 2>&1; then
+    echo "==> Ollama model already present: $MODEL"
+else
+    echo "==> pulling Ollama model: $MODEL"
+    ollama pull "$MODEL"
+fi
+
+exec "$REPO/Scripts/install.sh"

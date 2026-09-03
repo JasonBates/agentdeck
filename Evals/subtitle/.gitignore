@@ -1,0 +1,8 @@
+# Regenerable from manifest.json via extract.py + titles.py, and full of verbatim
+# transcript excerpts — book drafts, daily notes, personal reflection. Keep the
+# code, the manifest, the gold labels and the hand scores; leave the corpus out.
+checkpoints.json
+results*.jsonl
+binary*.jsonl
+*.log
+__pycache__/

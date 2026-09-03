@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# Run this worktree's AgentDeck preview in the foreground for Corral.
+
+set -euo pipefail
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
+SCRIPT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="${AGENTDECK_PREVIEW_REPO:-}"
+PREVIEW_HOST="${AGENTDECK_PREVIEW_HOST:-}"
+BASE_PORT="${AGENTDECK_PREVIEW_BASE_PORT:-4100}"
+END_PORT="${AGENTDECK_PREVIEW_END_PORT:-4199}"
+MODEL="${AGENTDECK_PREVIEW_MODEL:-gemma4:12b}"
+TAB_TITLES="${AGENTDECK_PREVIEW_TAB_TITLES:-off}"
+PORT="${HWT_DEV_PORT:-${PORT:-}}"
+CHILD_PID=""
+ROUTE_REGISTERED=false
+
+die() {
+    echo "preview: $*" >&2
+    exit 1
+}
+
+require() {
+    command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+usage() {
+    cat >&2 <<'EOF'
+usage: ./Scripts/preview run --port PORT [--repo WORKTREE]
+
+Normally use `hwt dev`; Corral supplies the worktree's leased port.
+EOF
+    exit 2
+}
+
+[[ "${1:-}" == "run" ]] || usage
+shift
+while (( $# > 0 )); do
+    case "$1" in
+        --port)
+            (( $# >= 2 )) || usage
+            PORT="$2"
+            shift 2
+            ;;
+        --model)
+            (( $# >= 2 )) || usage
+            MODEL="$2"
+            shift 2
+            ;;
+        --repo)
+            (( $# >= 2 )) || usage
+            REPO="$2"
+            shift 2
+            ;;
+        *) usage ;;
+    esac
+done
+
+if [[ -z "$REPO" ]]; then
+    REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+[[ -n "$REPO" ]] || REPO="$SCRIPT_REPO"
+REPO="$(cd "$REPO" && pwd -P)"
+[[ -d "$REPO/.git" || -f "$REPO/.git" ]] || die "$REPO is not a Git checkout"
+
+[[ "$PORT" =~ ^[0-9]+$ ]] || die "a numeric --port is required"
+(( PORT >= BASE_PORT && PORT <= END_PORT )) ||
+    die "port $PORT is outside Corral's preview range $BASE_PORT-$END_PORT"
+
+SLOT=$((PORT - BASE_PORT + 1))
+ROUTE="/test$SLOT"
+TARGET="http://127.0.0.1:$PORT"
+URL="https://$PREVIEW_HOST$ROUTE/"
+
+route_target() {
+    tailscale serve status 2>/dev/null |
+        awk -v route="$ROUTE" '$2 == route { print $4; exit }'
+}
+
+cleanup() {
+    local status=$? current_target
+    trap - EXIT INT TERM HUP
+
+    if [[ "$ROUTE_REGISTERED" == true ]]; then
+        current_target="$(route_target || true)"
+        if [[ "$current_target" == "$TARGET" ]]; then
+            tailscale serve --set-path="$ROUTE" off >/dev/null 2>&1 || true
+            echo "Removed Tailscale route $ROUTE"
+        fi
+    fi
+
+    if [[ -n "$CHILD_PID" ]] && kill -0 "$CHILD_PID" 2>/dev/null; then
+        kill "$CHILD_PID" 2>/dev/null || true
+        wait "$CHILD_PID" 2>/dev/null || true
+    fi
+
+    exit "$status"
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
+require curl
+require tailscale
+require xcrun
+
+if [[ -z "$PREVIEW_HOST" ]]; then
+    PREVIEW_HOST="$(tailscale status --json 2>/dev/null |
+        plutil -extract Self.DNSName raw -o - -- - 2>/dev/null |
+        sed 's/\.$//' || true)"
+fi
+[[ -n "$PREVIEW_HOST" ]] ||
+    die "could not determine the Tailscale hostname; set AGENTDECK_PREVIEW_HOST"
+
+existing_target="$(route_target || true)"
+if [[ -n "$existing_target" && "$existing_target" != "$TARGET" ]]; then
+    die "$ROUTE already points to $existing_target"
+fi
+
+if [[ -d /Applications/Xcode.app/Contents/Developer ]]; then
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+fi
+SWIFT="$(xcrun --find swift)"
+
+echo "Building AgentDeck from $REPO"
+(cd "$REPO" && "$SWIFT" build)
+BIN_DIR="$(cd "$REPO" && "$SWIFT" build --show-bin-path)"
+BINARY="$BIN_DIR/AgentDeckBridge"
+[[ -x "$BINARY" ]] || die "build did not produce $BINARY"
+
+AGENTDECK_PUBLIC="$REPO/Public" \
+AGENTDECK_MODEL="$MODEL" \
+AGENTDECK_TAB_TITLES="$TAB_TITLES" \
+    "$BINARY" --port "$PORT" &
+CHILD_PID=$!
+
+ready=false
+for _ in {1..200}; do
+    if curl -fsS "$TARGET/" >/dev/null 2>&1; then
+        ready=true
+        break
+    fi
+    kill -0 "$CHILD_PID" 2>/dev/null || break
+    sleep 0.1
+done
+[[ "$ready" == true ]] || die "bridge did not become ready on port $PORT"
+
+tailscale serve --bg --set-path="$ROUTE" "$TARGET" >/dev/null
+ROUTE_REGISTERED=true
+
+echo "Preview ready: $URL"
+echo "Worktree: $REPO"
+echo "Model: $MODEL"
+echo "Herdr tab-title sync: $TAB_TITLES"
+echo "This preview lives only while this command is running; press Ctrl-C to stop it."
+
+wait "$CHILD_PID"
+CHILD_PID=""

@@ -1,0 +1,21 @@
+{
+  "_comment": "My own scores for the decisive comparison — the shipped prompt against D on all 17 thin-prompt checkpoints, averaged over the 3 repeats where they differ. The LLM judge is only 66-71% agreed with me, so the headline claim does not rest on it. Same rubric: 2 same step, 1 right area or wrong grain, 0 wrong, vacuous, or rejected by a gate.",
+
+  "d5a303fd#28":  {"A": 0.00, "D": 1.67, "note": "A vacuous; D names the keepalive measurement"},
+  "ec755f5f#16":  {"A": 2.00, "D": 1.00, "note": "D regressed: 'identify method' rather than 'change'"},
+  "f7425725#8":   {"A": 0.00, "D": 1.00, "note": "A read the prompt as a statement about user behaviour"},
+  "f7425725#28":  {"A": 1.00, "D": 1.33, "note": "both generic; D once named the object"},
+  "b199d58e#26":  {"A": 0.00, "D": 1.00, "note": "A invented errors that were not happening"},
+  "c998fa10#21":  {"A": 1.00, "D": 0.00, "note": "D rejected (assistant-action) on a wind-down turn"},
+  "4a7a839e#6":   {"A": 2.00, "D": 2.00, "note": "prompt was self-sufficient"},
+  "3246747b#5":   {"A": 1.00, "D": 1.00, "note": "both partial"},
+  "3246747b#17":  {"A": 0.00, "D": 1.00, "note": "A vacuous; D named the wrong decision"},
+  "52fafefd#15":  {"A": 0.00, "D": 2.00, "note": "A echoed the prompt as a noun phrase"},
+  "24e1cae6#2":   {"A": 0.00, "D": 2.00, "note": "A misread 'everyone' as email recipients"},
+  "24e1cae6#5":   {"A": 0.00, "D": 2.00, "note": "A guessed from the title; one rep rejected"},
+  "24e1cae6#8":   {"A": 1.00, "D": 0.00, "note": "D rejected by distinct() though its text was right"},
+  "01a00bf8#3":   {"A": 1.00, "D": 2.00, "note": "A a noun phrase, D the actual step"},
+  "01a00bf8#6":   {"A": 0.00, "D": 2.00, "note": "A 'Software installation'"},
+  "019fa292#7":   {"A": 1.00, "D": 2.00, "note": "A said Module, not Movement"},
+  "019fa5ac#6":   {"A": 1.00, "D": 2.00, "note": "A 'Self-evaluation of performance', no object"}
+}

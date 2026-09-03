@@ -1,0 +1,12 @@
+# AgentDeck writes its generated session title into the Herdr tab label. Lead with that
+# label in the Agents panel and retain the workspace as a quieter second-line locator.
+[ui.sidebar.agents]
+rows = [
+  [
+    "state_icon",
+    { token = "tab", bold = true, dim = false },
+  ],
+  [
+    { token = "workspace", bold = false, dim = true },
+  ],
+]

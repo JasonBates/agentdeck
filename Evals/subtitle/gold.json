@@ -1,0 +1,83 @@
+{
+  "_comment": "Hand-written reference subtitles: the atomic action underway at that prompt, in service of the session's larger goal. Written from what the bridge can see at generation time — the prompt plus the turns before it — never from the reply that had not happened yet. Where a prompt is thin ('ok restarted', 'sure check please') the atomic action is the thing the prompt is answering, which is legitimately in the preceding context; those are the cases the shipped prompt cannot reach, and they are deliberately kept in the set rather than filtered out.",
+
+  "d5a303fd#28": "Confirm keepalive latency after restart",
+  "d5a303fd#61": "Redraw the day as a heat strip",
+  "d5a303fd#94": "Rescale palette and promote section three",
+
+  "ec755f5f#16": "Change the board's wake word",
+  "ec755f5f#36": "Measure latency against preinjected context size",
+  "ec755f5f#55": "Add a 1.5 second pause before replying",
+
+  "e71fe949#16": "Choose per-tab data worth showing",
+  "e71fe949#35": "Find why CodexBar shows no window",
+  "e71fe949#54": "Benchmark local models and research alternatives",
+
+  "f7425725#8": "Remove the unused guidance feature",
+  "f7425725#18": "Add movement detail to the drawer",
+  "f7425725#28": "Write and test the vault key plan",
+
+  "b199d58e#8": "Fix the dashboard tunnel DNS conflict",
+  "b199d58e#17": "Log out of the Access session",
+  "b199d58e#26": "Confirm the rate limit is active",
+
+  "c998fa10#6": "Build continuous zoom labels for the map",
+  "c998fa10#14": "Add light links to 23 duplicate notes",
+  "c998fa10#21": "Close out the session's loose ends",
+
+  "4a7a839e#6": "Check whether symlinking instruction files is recommended",
+  "4a7a839e#13": "Reconcile the findings with the council skill",
+  "4a7a839e#20": "Start phase 0 in a throwaway tab",
+
+  "3246747b#5": "Close the remaining open question",
+  "3246747b#11": "Make every LLM process a primary entity",
+  "3246747b#17": "Decide whether to merge the curator branch",
+
+  "52fafefd#4": "Run a synthetic hook test",
+  "52fafefd#10": "Search GitHub for an existing feature request",
+  "52fafefd#15": "Read the log after the approve tap",
+
+  "24e1cae6#2": "Bypass Access on the webhook path",
+  "24e1cae6#5": "Check whether the webhook host is gated",
+  "24e1cae6#8": "Verify the webhook path after restart",
+
+  "019fec3f#8": "Research other builds for this display",
+  "019fec3f#19": "Add outside temperature to the dashboard",
+  "019fec3f#29": "Realign the INSIDE label over the graph",
+
+  "01a00bf8#3": "Design a cross-repo feature lane protocol",
+  "01a00bf8#6": "Install Corral and run its preflight",
+  "01a00bf8#9": "Audit stale worktrees across local repos",
+
+  "e897ada5#6": "Redefine incubation against the return path",
+  "e897ada5#14": "Correct the conditioning-from-imagination claim",
+  "e897ada5#22": "Check the whole essay's argument",
+
+  "ec86c981#3": "Use the draft as an argument map",
+  "ec86c981#6": "Propose clearer structures for the chapter",
+  "ec86c981#9": "Lay out the simplified three-part structure",
+
+  "020b0592#4": "Test a candidate cover line",
+  "020b0592#10": "Test the architecture against traditions and evidence",
+  "020b0592#15": "Check relapse curves against the frailty account",
+
+  "019fa292#7": "Draft M3's opening paragraph",
+  "019fa292#15": "Refine the availability states in the report",
+  "019fa292#23": "Research subliminal processing for the model",
+
+  "019fa5ac#6": "Self-assess the chapter six draft",
+  "019fa5ac#13": "Scope how much of the chapter is rewritten",
+  "019fa5ac#20": "Test and save the three-part structure",
+
+  "019fa864#3": "Check the closure note against the plan",
+  "019fa864#7": "Test the gambling counterexample against the definition",
+  "019fa864#11": "Shorten the opening definition",
+
+  "019fa7ae#4": "Rederive the reach criterion",
+  "019fa7ae#10": "Render and save the hinge report",
+  "019fa7ae#15": "Trace spirals back to hidden priors",
+
+  "019fa7b1#3": "Research comparable framework-building authors",
+  "019fa7b1#6": "Search vault versions for project history",
+  "019fa7b1#9": "Test the three-decade vocation framing"
+}

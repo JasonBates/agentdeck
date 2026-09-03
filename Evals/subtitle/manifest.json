@@ -1,0 +1,26 @@
+{
+  "_comment": "Twenty real sessions. Technical work is drawn from 08-08..08-16; book-writing sessions are thin in that window (chapter work was in pi, and pi sessions there are single-shot), so the book half reaches back to 07-26..07-28 where multi-turn chapter work actually happened. Both halves matter because one subtitle prompt serves all three agents and both domains. `match` is a unique fragment of the transcript filename.",
+  "sessions": [
+    {"kind": "claude", "match": "d5a303fd", "domain": "technical", "note": "alix whoop webhook -> daily note"},
+    {"kind": "claude", "match": "ec755f5f", "domain": "technical", "note": "ESP32 epaper over USB"},
+    {"kind": "claude", "match": "e71fe949", "domain": "technical", "note": "recreate xeneon dashboard on mac"},
+    {"kind": "claude", "match": "f7425725", "domain": "technical", "note": "pause subjectiv dashboard / crawler"},
+    {"kind": "claude", "match": "b199d58e", "domain": "technical", "note": "whoop webhook security"},
+    {"kind": "claude", "match": "c998fa10", "domain": "technical", "note": "clustering and naming conventions"},
+    {"kind": "claude", "match": "4a7a839e", "domain": "technical", "note": "cross-agent herdr skill"},
+    {"kind": "claude", "match": "3246747b", "domain": "technical", "note": "cross-tradition research run"},
+    {"kind": "claude", "match": "52fafefd", "domain": "technical", "note": "pi3 stop hooks"},
+    {"kind": "claude", "match": "24e1cae6", "domain": "technical", "note": "inbox-zero stopped sorting"},
+    {"kind": "codex", "match": "019fec3f-761", "domain": "technical", "note": "ESP32-S3-RLCD install"},
+    {"kind": "codex", "match": "01a00bf8", "domain": "technical", "note": "agentdeck parallel worktrees"},
+
+    {"kind": "claude", "match": "e897ada5", "domain": "book", "note": "chapter 6 movement 3"},
+    {"kind": "claude", "match": "ec86c981", "domain": "book", "note": "frontier model draft critique"},
+    {"kind": "claude", "match": "020b0592", "domain": "book", "note": "book project review"},
+    {"kind": "pi", "match": "019fa292", "domain": "book", "note": "morning book planning"},
+    {"kind": "pi", "match": "019fa5ac", "domain": "book", "note": "book status check"},
+    {"kind": "pi", "match": "019fa864", "domain": "book", "note": "chapter 6 spiral alignment plan"},
+    {"kind": "pi", "match": "019fa7ae", "domain": "book", "note": "rewriting and restructuring"},
+    {"kind": "codex", "match": "019fa7b1", "domain": "book", "note": "hard writing week retrospective"}
+  ]
+}
