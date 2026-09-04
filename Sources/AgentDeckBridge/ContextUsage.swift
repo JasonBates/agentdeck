@@ -26,28 +26,39 @@ struct ContextUse: Encodable {
 enum ContextReader {
     private static let lock = NSLock()
     private static var cache: [String: (stamp: Date, size: Int, value: ContextUse?)] = [:]
+    private static var claudePaths: [String: String] = [:]
     private static var codexPaths: [String: String] = [:]
 
     /// Where an agent's transcript lives. Shared with the titler, which reads the same
     /// files for their content rather than their token counts.
-    static func path(agent kind: String, session: HerdrAgentSession?, cwd: String) -> String? {
+    static func path(agent kind: String, session: HerdrAgentSession?, cwd: String,
+                     home: String = NSHomeDirectory()) -> String? {
         guard let value = session?.value, !value.isEmpty else { return nil }
         let fm = FileManager.default
         switch kind {
         case "claude":
             // Spaces are slugified too: "…/000 Daily Notes" becomes
-            // "…-000-Daily-Notes". Replacing only slashes silently loses those sessions.
+            // "…-000-Daily-Notes". Try the common spelling first because it avoids a
+            // directory scan on ordinary paths.
             let slug = cwd
                 .replacingOccurrences(of: "/", with: "-")
                 .replacingOccurrences(of: " ", with: "-")
-            let p = "\(NSHomeDirectory())/.claude/projects/\(slug)/\(value).jsonl"
-            return fm.fileExists(atPath: p) ? p : nil
+            let root = "\(home)/.claude/projects"
+            let p = "\(root)/\(slug)/\(value).jsonl"
+            if fm.fileExists(atPath: p) { return p }
+
+            // Claude replaces characters such as emoji with hyphens when naming its
+            // project directories. Reproducing that private slugging rule is brittle:
+            // a cwd containing "⭐️ Subjectiv" is stored under "----Subjectiv", so the
+            // common spelling above cannot find it. The session UUID is authoritative;
+            // fall back to checking each project directory for that exact filename.
+            return claudePath(for: value, under: root)
         case "pi":
             // Herdr hands us the exact path, so there is nothing to resolve.
             guard session?.kind == "path", fm.fileExists(atPath: value) else { return nil }
             return value
         case "codex":
-            return codexPath(for: value)
+            return codexPath(for: value, under: "\(home)/.codex/sessions")
         default:
             return nil
         }
@@ -63,17 +74,43 @@ enum ContextReader {
         }
     }
 
-    /// Rollout filenames embed the session uuid but also a date directory we don't know.
-    /// The glob is bounded (94 files here, ~2ms) and the result is memoised anyway.
-    private static func codexPath(for uuid: String) -> String? {
+    /// Claude project directories are one level beneath `projects`. Check the exact UUID
+    /// in each rather than guessing how Claude slugged arbitrary Unicode in the cwd.
+    private static func claudePath(for uuid: String, under root: String) -> String? {
+        let key = "\(root)\0\(uuid)"
         lock.lock()
-        if let hit = codexPaths[uuid] {
+        if let hit = claudePaths[key] {
             lock.unlock()
             return FileManager.default.fileExists(atPath: hit) ? hit : nil
         }
         lock.unlock()
 
-        let root = "\(NSHomeDirectory())/.codex/sessions"
+        let fm = FileManager.default
+        guard let projects = try? fm.contentsOfDirectory(atPath: root) else { return nil }
+        for project in projects {
+            let candidate = URL(fileURLWithPath: root, isDirectory: true)
+                .appendingPathComponent(project, isDirectory: true)
+                .appendingPathComponent("\(uuid).jsonl")
+                .path
+            if fm.fileExists(atPath: candidate) {
+                lock.lock(); claudePaths[key] = candidate; lock.unlock()
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    /// Rollout filenames embed the session uuid but also a date directory we don't know.
+    /// The scan is bounded and the result is memoised anyway.
+    private static func codexPath(for uuid: String, under root: String) -> String? {
+        let key = "\(root)\0\(uuid)"
+        lock.lock()
+        if let hit = codexPaths[key] {
+            lock.unlock()
+            return FileManager.default.fileExists(atPath: hit) ? hit : nil
+        }
+        lock.unlock()
+
         let fm = FileManager.default
         guard let e = fm.enumerator(atPath: root) else { return nil }
         var found: String?
@@ -82,7 +119,7 @@ enum ContextReader {
             break
         }
         if let found {
-            lock.lock(); codexPaths[uuid] = found; lock.unlock()
+            lock.lock(); codexPaths[key] = found; lock.unlock()
         }
         return found
     }
