@@ -388,15 +388,31 @@
   }
   .activity::before { content: '▸ '; color: var(--dim); }
 
-  /* State of play from the latest reply — finished, next, waiting on. The line you
-     read when deciding which agent to go to, so it gets a rule and real contrast. */
-  .state {
-    font-size: 12.5px; line-height: 1.4; color: #b9c0cc;
+  /* State of play from the latest reply, as three labelled rows: done, next, ask. The
+     block you read when deciding which agent to go to, so it gets a rule and real
+     contrast. Each row is one line, clipped: the label is what you scan for, and a clause
+     that needs a second line is a clause the model was told not to write. The ask row is
+     the one that changes what you do, so it is the one in colour. */
+  .outcome {
+    display: flex; flex-direction: column; gap: 3px;
     padding-left: 9px; border-left: 2px solid #343a45;
-    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-    overflow: hidden;
+    font-size: 12.5px; line-height: 1.35; color: #b9c0cc;
   }
-  .card.working .state { border-left-color: #6b4f28; }
+  /* Two lines each, then clipped: a 14-word clause needs two on a 300px card, and a
+     clause cut at one line was the illegibility this block exists to replace. */
+  .outcome .o { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+  .outcome .o span:last-child {
+    min-width: 0; display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .outcome .l {
+    flex: none; width: 30px; font: 600 9.5px/1 var(--mono); letter-spacing: .08em;
+    text-transform: uppercase; color: var(--dim);
+  }
+  .outcome .ask { color: #f0d9b0; }
+  .outcome .ask .l { color: var(--working); }
+  .card.working .outcome { border-left-color: #6b4f28; }
+  .card.has-ask .outcome { border-left-color: var(--working); }
 
   /* Context-window gauge. */
   .ctx { display: flex; align-items: center; gap: 7px; margin-top: 2px; }
@@ -705,11 +721,12 @@
     .phase { gap: 5px; font-size: 10px; }
     .phase .tok { display: none; }   /* elapsed earns the width here; tokens don't */
     .activity { display: none; }
-    .state {
-      font-size: 10px; line-height: 1.25; padding-left: 6px;
-      -webkit-line-clamp: 2;
-    }
-    .card:not(.blocked) .state { display: none; }
+    .outcome { font-size: 10px; line-height: 1.25; padding-left: 6px; gap: 2px; }
+    .outcome .o span:last-child { -webkit-line-clamp: 1; }
+    .outcome .l { width: 24px; font-size: 8px; }
+    /* Only the question earns card space at this size; done and next don't. */
+    .outcome .o:not(.ask) { display: none; }
+    .card:not(.has-ask) .outcome { display: none; }
     .ctx { gap: 5px; margin-top: 0; }
     .ctx .track { height: 4px; }
     .ctx .pct { font-size: 8px; }
@@ -942,6 +959,21 @@
     return '<div class="phase">' + bits.join('') + '</div>';
   }
 
+  // Three rows, each present only when the model had something to put in it.
+  function outcomeHTML(o) {
+    if (!o || !(o.done || o.next || o.ask)) return '';
+    function row(cls, label, text) {
+      return text
+        ? '<div class="o ' + cls + '"><span class="l">' + label + '</span><span>' +
+          esc(text) + '</span></div>'
+        : '';
+    }
+    return '<div class="outcome">' +
+             row('done', 'done', o.done) + row('next', 'next', o.next) +
+             row('ask', 'ask', o.ask) +
+           '</div>';
+  }
+
   function ctxHTML(c) {
     if (!c) return '';
     var cls = c.percent >= 85 ? ' hot' : (c.percent >= 60 ? ' warn' : '');
@@ -1103,6 +1135,7 @@
                (a.focused ? ' focused' : '') +
                (isAged(a, st, unread) ? ' aged' : '') +
                (a.starting ? ' starting' : '') +
+               (a.outcome && a.outcome.ask ? ' has-ask' : '') +
                '" data-pane="' + esc(a.paneId) + '">' +
           '<div class="row">' +
             '<span class="dot ' + st + '"></span>' +
@@ -1123,12 +1156,12 @@
           // Activity and outcome both describe current work, and a working card already
           // carries title + subtitle + phase + context + outcome. Showing both overflowed
           // the tile at nine-up. Activity is the fallback for when there's no outcome yet.
-          (a.activity && st === 'working' && !a.state
+          (a.activity && st === 'working' && !a.outcome
             ? '<div class="activity">' + esc(a.activity) + '</div>' : '') +
           // Context gauge sits above the outcome: it's a property of the session, read
           // at a glance, where the outcome is prose you stop to read.
           ctxHTML(a.context) +
-          (a.state ? '<div class="state">' + esc(a.state) + '</div>' : '') +
+          outcomeHTML(a.outcome) +
           '<div class="meta">' +
             // The address above already names the workspace, and you name your
             // workspaces after the repo, so this is the same word twice on almost every

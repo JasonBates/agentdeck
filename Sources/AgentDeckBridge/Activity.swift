@@ -31,6 +31,20 @@ struct BackgroundWork: Encodable, Equatable {
     var count: Int
 }
 
+/// The state of play on a card: three short fields from the latest reply. `ask` is the
+/// one that changes what you do — it is the question the agent has stopped on.
+struct Outcome: Encodable, Equatable {
+    var done: String?
+    var next: String?
+    var ask: String?
+
+    /// The one-string form the summariser stores and logs; `parseOutcome` reads it back.
+    var serialised: String {
+        ["DONE: \(done ?? "-")", "NEXT: \(next ?? "-")", "ASK: \(ask ?? "-")"]
+            .joined(separator: "\n")
+    }
+}
+
 extension HerdrSource {
     /// `--source visible` is the only source that works on a *working* agent — `recent`
     /// refuses with agent_not_idle, because alternate-screen history can only be
@@ -585,31 +599,96 @@ final class Summariser {
         return s
     }
 
-    /// The state of play, from the agent's most recent reply. This is the line that
-    /// answers "does this one need me?", so it's asked for concretely: finished or not,
-    /// what comes next, and any decision waiting on a human.
+    /// The state of play, from the agent's most recent reply, as three labelled lines:
+    /// what got done, what comes next, and the question the agent is waiting on. This is
+    /// the block that answers "does this one need me?", and it used to be asked for as
+    /// three sentences of prose. Three sentences from a reply read in isolation came out
+    /// as "The agent identified five pending tasks…" followed by "No decisions are
+    /// pending" — 73% of outcomes in the log carried a sentence that said nothing, and
+    /// 47% opened by naming the agent. Labelled clauses with the user's own request as
+    /// context are shorter, land on the card as three scannable rows, and make the open
+    /// question a field the deck can show on its own rather than prose it has to hope
+    /// you read to the end of.
     private func generateState(_ d: TranscriptDigest, pane: String,
                                promptsSeen: Int) -> String? {
+        let context = d.lastPrompt.isEmpty
+            ? ""
+            : "THE USER HAD ASKED FOR:\n\(String(d.lastPrompt.prefix(300)))\n\n"
         let prompt = """
-        Below is the latest reply from a coding agent to its user.
-        Summarise it in at most 3 short sentences: what was done, what happens next,
-        and any decision or answer it is waiting on. Lead with whichever matters most.
-        Write impersonally — never "you" or "I". Be concrete and specific.
-        No quotes. No preamble.
+        A coding agent has just replied to its user. Write three lines for a status card
+        the user reads at a glance, in this exact form:
 
-        LATEST REPLY:
+        DONE: what this reply accomplished. One clause, at most 14 words, using the
+        concrete names from the reply (files, notes, functions, chapters).
+        NEXT: what the agent said it will do next or proposed doing. One clause, at
+        most 14 words. Write - if it named nothing.
+        ASK: what the reply is waiting on the user for — a question it asked, a choice
+        it left open ("pending your choice", "let me know", "which do you prefer"), or
+        approval it needs. Phrase it as one question ending in ?, at most 16 words.
+        Write - if the reply is not waiting on the user for anything.
+
+        Never write "the agent", "the user", "you" or "I". No preamble, no other lines.
+        Do not invent a question: ASK is - unless the reply is genuinely waiting on the user.
+
+        \(context)THE AGENT REPLIED:
         \(String(d.lastReply.prefix(1400)))
 
-        STATE:
+        DONE:
         """
-        // 380 chars, multiline. Two sentences never fit the 90-char single-line cap the
-        // activity label uses. 260 was still too tight — every model tested landed
-        // 300–400 chars for a genuine three-sentence summary, so the cap was doing the
-        // trimming rather than the prompt, on every single output.
-        guard let s = call(prompt: prompt, maxTokens: 110, maxChars: 380, multiline: true,
-                           kind: "outcome", pane: pane, promptsSeen: promptsSeen)
+        // The three lines together; the parser below splits them back out. 600 is above
+        // anything the token budget can produce, so tidy's sentence trimming never fires
+        // on this shape and cuts the ASK line off the end.
+        guard let raw = call(prompt: prompt, maxTokens: 150, maxChars: 600, multiline: true,
+                             kind: "outcome", pane: pane, promptsSeen: promptsSeen)
         else { return nil }
-        return s.count > 12 ? s : nil
+        // The prompt ends in "DONE:", so the model's first line is usually the bare clause.
+        let text = raw.range(of: "DONE:", options: .caseInsensitive) == nil
+            ? "DONE: " + raw : raw
+        guard let outcome = Self.parseOutcome(text) else { return nil }
+        return outcome.serialised
+    }
+
+    /// Splits "DONE: … NEXT: … ASK: …" — on one line or three — into its fields, dropping
+    /// placeholders and any ASK that is not actually a question. Nil when nothing useful
+    /// survives.
+    static func parseOutcome(_ text: String) -> Outcome? {
+        var fields: [String: String] = [:]
+        let labels = ["DONE", "NEXT", "ASK"]
+        // Positions of each label in order of appearance; each field runs to the next.
+        var marks: [(label: String, range: Range<String.Index>)] = []
+        for label in labels {
+            var searchFrom = text.startIndex
+            while let r = text.range(of: label + ":", options: .caseInsensitive,
+                                     range: searchFrom..<text.endIndex) {
+                marks.append((label, r))
+                searchFrom = r.upperBound
+            }
+        }
+        marks.sort { $0.range.lowerBound < $1.range.lowerBound }
+        for (i, m) in marks.enumerated() {
+            let end = i + 1 < marks.count ? marks[i + 1].range.lowerBound : text.endIndex
+            let value = clause(String(text[m.range.upperBound..<end]))
+            if let value, fields[m.label] == nil { fields[m.label] = value }
+        }
+        var ask = fields["ASK"]
+        if let a = ask, !a.hasSuffix("?") || a.count < 8 { ask = nil }
+        let o = Outcome(done: fields["DONE"], next: fields["NEXT"], ask: ask)
+        return o.done == nil && o.next == nil && o.ask == nil ? nil : o
+    }
+
+    /// One field's text, or nil when it is a placeholder or names the agent.
+    private static func clause(_ raw: String) -> String? {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`“” -–—•*"))
+        s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        if s.hasSuffix(".") { s = String(s.dropLast()) }
+        let lowered = s.lowercased()
+        let placeholders: Set<String> = ["", "-", "—", "n/a", "none", "nothing", "no",
+                                         "not applicable", "nothing pending", "no decision",
+                                         "no decisions", "no question", "no questions"]
+        if placeholders.contains(lowered) || s.count < 3 { return nil }
+        if lowered.hasPrefix("the agent ") || lowered.hasPrefix("the user ") { return nil }
+        return String(s.prefix(160))
     }
 
     /// True when a heading names the user's work rather than the assistant's reply to it.

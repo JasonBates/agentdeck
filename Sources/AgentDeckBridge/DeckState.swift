@@ -53,7 +53,7 @@ struct DeckAgent: Encodable {
     /// Herdr's terminal title, which at this point is just the directory too.
     var starting: Bool
     var focus: String?      // where the last five turns have got to
-    var state: String?      // finished / next / waiting-on, from the latest reply
+    var outcome: Outcome?   // done / next / ask, from the latest reply
     var unread: Bool        // replied since you last had this pane focused
     var repliedAgo: Int?    // seconds since its last completed reply
     var projectId: String   // shared repo key, falling back to the Herdr workspace id
@@ -259,7 +259,8 @@ enum Deck {
             if let modelName, tabLabel == modelName { tabLabel = "" }
             // The subtitle is always useful, even where Herdr's own title is kept.
             let focus = transcript != nil ? summariser?.subtitle(for: a.paneId) : nil
-            let state = transcript != nil ? summariser?.state(for: a.paneId) : nil
+            let outcome = transcript != nil
+                ? summariser?.state(for: a.paneId).flatMap(Summariser.parseOutcome) : nil
 
             return DeckAgent(
                 paneId: a.paneId,
@@ -274,7 +275,7 @@ enum Deck {
                 titleSource: modelName != nil ? "model" : "herdr",
                 starting: digest == nil,
                 focus: focus,
-                state: state,
+                outcome: outcome,
                 unread: read.unread,
                 // Quantised to 30s. As a raw second count this ticked every poll, so
                 // every payload differed, every tick broadcast, and the client rebuilt

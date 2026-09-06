@@ -155,14 +155,17 @@ does not repeat two descriptions of the same work.
 **Context** — transcript-derived context-window fill for Claude, pi and Codex. It sits
 above the outcome because it describes session pressure, not the work itself.
 
-**Outcome** — up to three short sentences generated from the latest completed reply:
-what finished, what comes next, and whether a decision is waiting. A new user prompt
-clears the old outcome immediately rather than presenting completed work as current.
-
-Cards also carry Herdr status, agent kind, workspace/worktree label and foreground
-directory. A reply becomes unread when it lands after that pane was last focused; blocked
-and unread-finished cards enter the **Next** queue. Repeated presses cycle the queue while
-preserving the device's chosen card order.
+**Outcome** — three labelled rows from the latest completed reply: **done**, **next**
+and **ask**. Each is one clause the model writes with the user's own request as context,
+so it names what was actually asked for rather than describing the reply in the
+abstract. It replaced a three-sentence prose summary: on the log of 282 outcomes, 73%
+carried a "no decisions are pending" sentence and 47% opened with "The agent…", so the
+three clamped lines were spending themselves on filler. **ask** is the question the
+agent has stopped on — a question it asked, a choice it left "pending your choice", an
+approval it needs — and it must be phrased as a question or it is dropped, because a
+statement in that slot is one the model made up. It is the row in colour, and the only
+row shown at iPhone size. A new user prompt clears the old outcome immediately rather
+than presenting completed work as current. Every generation, ask included, is logged.
 
 ## Context gauge
 
@@ -228,5 +231,6 @@ size and mtime.
 - Filtering to a project packs the cards up instead of showing the other projects' empty
   cells. A drag there trades two cards' slots, which means the same thing in both views,
   but you can only place a card into free space from **All**.
-- Outcome text is clamped to three lines in CSS and the model sometimes writes past it,
-  so a third sentence can be cut mid-phrase.
+- The **ask** row is model judgement about whether a reply is waiting on you, and it
+  does not feed the Next queue or the pills — only Herdr's own blocked state does. If
+  it proves reliable, the queue is the obvious next place for it.
