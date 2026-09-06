@@ -75,14 +75,37 @@ struct OriginPolicy: Equatable {
 final class HTTPServer {
     private let port: NWEndpoint.Port
     private let queue = DispatchQueue(label: "agentdeck.http")
+    /// Actions shell out to `herdr` and can take up to its 5s timeout. They used to run
+    /// on `queue`, which also accepts connections and delivers every SSE frame, so one
+    /// slow `tab create` froze every client's stream for its duration.
+    private let actions = DispatchQueue(label: "agentdeck.http.actions")
     private var listener: NWListener?
-    private var sseClients: [ObjectIdentifier: NWConnection] = [:]
+    private var sseClients: [ObjectIdentifier: SSEClient] = [:]
     private var lastPayload: Data?
+    private var lastTabCreate = Date.distantPast
+
+    /// One event stream. `pending` counts frames handed to the connection whose
+    /// completion has not fired: a peer that has stopped reading — an iPad asleep behind
+    /// the Serve proxy — never acknowledges, and without the count its frames would
+    /// accumulate in process memory for as long as it stayed asleep.
+    private final class SSEClient {
+        let conn: NWConnection
+        var pending = 0
+        init(_ conn: NWConnection) { self.conn = conn }
+    }
+    /// Six unacknowledged frames is thirty seconds of heartbeat with no reader behind it.
+    static let maxPendingFrames = 6
+    /// More streams than a household of devices could hold open.
+    static let maxStreams = 32
 
     /// Handlers supplied by main.
     var onFocus: ((String) -> Bool)?
     var onWorkspace: ((String) -> Bool)?
     var onCreateTab: ((String) -> Bool)?
+    /// Whether an id in a POST body names something in the last Herdr snapshot. Bodies
+    /// used to go straight into `herdr` argv; the bridge already holds the snapshot, so
+    /// anything it has not seen is refused before a subprocess is spawned.
+    var isKnown: ((_ kind: String, _ id: String) -> Bool)?
     /// Called once the listener is genuinely bound — not merely constructed.
     var onReady: (() -> Void)?
     var snapshotJSON: (() -> Data)?
@@ -178,7 +201,12 @@ final class HTTPServer {
 
             let head = String(decoding: buf[..<headerEnd.lowerBound], as: UTF8.self)
             let body = buf[headerEnd.upperBound...]
-            let expected = Self.contentLength(head)
+            guard let expected = Self.contentLength(head) else {
+                self.respond(conn, status: "400 Bad Request",
+                             body: Data(#"{"ok":false,"error":"bad_content_length"}"#.utf8),
+                             type: "application/json")
+                return
+            }
             if expected > Self.maxBodyBytes {
                 self.respond(conn, status: "413 Content Too Large",
                              body: Data(#"{"ok":false,"error":"too_large"}"#.utf8),
@@ -198,8 +226,20 @@ final class HTTPServer {
         conn.cancel()
     }
 
-    private static func contentLength(_ head: String) -> Int {
-        Int(header("content-length", in: head) ?? "") ?? 0
+    /// Absent means zero. Anything present that isn't a non-negative integer is nil,
+    /// and the request is refused: `Content-Length: -1` used to parse as -1, pass every
+    /// size check, and trap in `prefix(-1)` — one request from anywhere on the tailnet
+    /// took the bridge down, and launchd brought it straight back for the next one.
+    static func contentLength(_ head: String) -> Int? {
+        guard let raw = header("content-length", in: head) else { return 0 }
+        guard let n = Int(raw), n >= 0 else { return nil }
+        return n
+    }
+
+    /// Something Herdr could plausibly have issued: short, printable, and not a flag.
+    static func plausibleId(_ id: String) -> Bool {
+        !id.isEmpty && id.count <= 64 && !id.hasPrefix("-")
+            && id.unicodeScalars.allSatisfy { $0.value > 0x20 && $0.value < 0x7f }
     }
 
     /// First header with this (lowercased) name, value trimmed. Only the request line
@@ -249,38 +289,59 @@ final class HTTPServer {
             openStream(conn)
 
         case ("POST", "/api/focus"):
-            let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
-            if let pane = obj?["paneId"] as? String, onFocus?(pane) == true {
-                respond(conn, body: Data(#"{"ok":true}"#.utf8), type: "application/json")
-            } else {
-                respond(conn, status: "400 Bad Request",
-                        body: Data(#"{"ok":false}"#.utf8), type: "application/json")
-            }
+            act(conn, body: body, key: "paneId", kind: "pane", handler: onFocus)
 
         case ("POST", "/api/workspace"):
-            let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
-            if let ws = obj?["workspaceId"] as? String, onWorkspace?(ws) == true {
-                respond(conn, body: Data(#"{"ok":true}"#.utf8), type: "application/json")
-            } else {
-                respond(conn, status: "400 Bad Request",
-                        body: Data(#"{"ok":false}"#.utf8), type: "application/json")
-            }
+            act(conn, body: body, key: "workspaceId", kind: "workspace", handler: onWorkspace)
 
         case ("POST", "/api/tab"):
-            let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
-            if let ws = obj?["workspaceId"] as? String, onCreateTab?(ws) == true {
-                respond(conn, body: Data(#"{"ok":true}"#.utf8), type: "application/json")
-            } else {
-                respond(conn, status: "400 Bad Request",
-                        body: Data(#"{"ok":false}"#.utf8), type: "application/json")
+            // Creating tabs is the one action that leaves something behind, so it is
+            // also the one worth pacing: a finger held on the button, or anything less
+            // friendly, gets one tab a second rather than one per request.
+            if Date().timeIntervalSince(lastTabCreate) < 1 {
+                respond(conn, status: "429 Too Many Requests",
+                        body: Data(#"{"ok":false,"error":"slow_down"}"#.utf8),
+                        type: "application/json")
+                return
             }
+            lastTabCreate = Date()
+            act(conn, body: body, key: "workspaceId", kind: "workspace", handler: onCreateTab)
 
         default:
             respond(conn, status: "404 Not Found", body: Data("not found".utf8), type: "text/plain")
         }
     }
 
+    /// One shape for every action: a JSON body with one id, checked against the last
+    /// snapshot, handed to `herdr` off the serving queue.
+    private func act(_ conn: NWConnection, body: Data, key: String, kind: String,
+                     handler: ((String) -> Bool)?) {
+        let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        guard let id = obj?[key] as? String, Self.plausibleId(id),
+              isKnown?(kind, id) ?? true, let handler else {
+            respond(conn, status: "400 Bad Request",
+                    body: Data(#"{"ok":false,"error":"unknown_id"}"#.utf8),
+                    type: "application/json")
+            return
+        }
+        actions.async { [weak self] in
+            guard let self else { return }
+            if handler(id) {
+                self.respond(conn, body: Data(#"{"ok":true}"#.utf8), type: "application/json")
+            } else {
+                self.respond(conn, status: "400 Bad Request",
+                             body: Data(#"{"ok":false}"#.utf8), type: "application/json")
+            }
+        }
+    }
+
     private func openStream(_ conn: NWConnection) {
+        if sseClients.count >= Self.maxStreams {
+            respond(conn, status: "503 Service Unavailable",
+                    body: Data(#"{"ok":false,"error":"too_many_streams"}"#.utf8),
+                    type: "application/json")
+            return
+        }
         let headers = """
         HTTP/1.1 200 OK\r
         Content-Type: text/event-stream\r
@@ -291,10 +352,11 @@ final class HTTPServer {
 
         """
         conn.send(content: Data(headers.utf8), completion: .idempotent)
-        sseClients[ObjectIdentifier(conn)] = conn
+        let client = SSEClient(conn)
+        sseClients[ObjectIdentifier(conn)] = client
         // Send current state immediately so a reconnecting client never shows blank.
         if let latest = lastPayload ?? snapshotJSON?() {
-            conn.send(content: Self.frame(latest), completion: .idempotent)
+            push(Self.frame(latest), to: client)
         }
         // Keep reading so we notice the client going away.
         conn.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] _, _, isComplete, error in
@@ -304,7 +366,19 @@ final class HTTPServer {
 
     private func send(event payload: Data) {
         let frame = Self.frame(payload)
-        for (_, c) in sseClients { c.send(content: frame, completion: .idempotent) }
+        for (_, c) in sseClients { push(frame, to: c) }
+    }
+
+    /// Queue one frame on a client, and drop the client if it has stopped taking them.
+    private func push(_ frame: Data, to client: SSEClient) {
+        if client.pending >= Self.maxPendingFrames {
+            drop(client.conn)
+            return
+        }
+        client.pending += 1
+        client.conn.send(content: frame, completion: .contentProcessed { [weak self, weak client] _ in
+            self?.queue.async { client?.pending -= 1 }
+        })
     }
 
     private static func frame(_ payload: Data) -> Data {

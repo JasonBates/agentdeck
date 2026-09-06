@@ -116,9 +116,17 @@ enum Shell {
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
         defer { watchdog.cancel() }
 
-        // Read before waiting so a large snapshot can't deadlock on a full pipe buffer.
+        // Read before waiting so a large snapshot can't deadlock on a full pipe buffer —
+        // and drain stderr concurrently, since a child that fills its stderr buffer
+        // before closing stdout would otherwise block until the watchdog killed it.
+        var errData = Data()
+        let errDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            errData = err.fileHandleForReading.readDataToEndOfFile()
+            errDone.signal()
+        }
         let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        errDone.wait()
         proc.waitUntilExit()
 
         if timedOut.isSet {

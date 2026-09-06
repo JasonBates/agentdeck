@@ -34,6 +34,10 @@ let encoder = JSONEncoder()
 encoder.outputFormatting = [.withoutEscapingSlashes]
 
 var latest: Data = Data("{}".utf8)
+/// Ids the last snapshot contained, so an action can be refused before it reaches
+/// `herdr` — see HTTPServer.isKnown.
+var knownPanes = Set<String>()
+var knownWorkspaces = Set<String>()
 let stateLock = NSLock()
 
 func currentJSON() -> Data {
@@ -82,6 +86,10 @@ let summariser: Summariser? = modelName == "off"
 
 let server = HTTPServer(port: port)
 server.snapshotJSON = { currentJSON() }
+server.isKnown = { kind, id in
+    stateLock.lock(); defer { stateLock.unlock() }
+    return kind == "pane" ? knownPanes.contains(id) : knownWorkspaces.contains(id)
+}
 server.policy = OriginPolicy(port: port, publicHost: publicHost, allowedOrigins: allowedOrigins)
 
 var source: HerdrSource?
@@ -155,27 +163,38 @@ do {
 // that catches anything no subscription covers.
 var tickCount = 0
 var tickTotalMs = 0.0
+// Declared ahead of the tick so the payload can carry the socket's health; assigned
+// once the tick exists, since the subscription's callback is what triggers one.
+var events: HerdrEvents?
 let poller = DispatchQueue(label: "agentdeck.poll")
 let timer = DispatchSource.makeTimerSource(queue: poller)
 timer.schedule(deadline: .now(), repeating: interval)
 func runTick() {
     let tickStart = DispatchTime.now()
     let payload: DeckPayload
+    var panes = Set<String>(), workspaces = Set<String>()
+    let eventStatus = events?.status ?? FeedStatus(ok: false, detail: "not started")
     if let src = source {
         do {
             let snap = try src.snapshot()
             payload = Deck.payload(from: snap, herdrDetail: "herdr \(snap.version)",
-                                   source: src, summariser: summariser)
+                                   source: src, summariser: summariser, events: eventStatus)
             tabTitleSync?.reconcile(snapshot: snap, deckAgents: payload.agents)
+            panes = Set(snap.agents.map(\.paneId))
+            workspaces = Set(snap.workspaces.map(\.workspaceId))
         } catch {
-            payload = Deck.failed("\(error)")
+            payload = Deck.failed("\(error)", events: eventStatus)
         }
     } else {
-        payload = Deck.failed("herdr not found on PATH")
+        payload = Deck.failed("herdr not found on PATH", events: eventStatus)
     }
 
     guard let data = try? encoder.encode(payload) else { return }
-    stateLock.lock(); latest = data; stateLock.unlock()
+    stateLock.lock()
+    latest = data
+    knownPanes = panes
+    knownWorkspaces = workspaces
+    stateLock.unlock()
     server.broadcast(data)
 
     // A tick that overruns its interval is the whole latency budget: focus changes
@@ -198,7 +217,7 @@ timer.resume()
 // Bursts are coalesced — one action emits pane_focused + workspace_focused +
 // tab_focused + pane_updated together, and they should cost a single tick.
 var tickPending = false
-let events = HerdrEvents {
+events = HerdrEvents {
     poller.async {
         guard !tickPending else { return }
         tickPending = true
@@ -208,7 +227,7 @@ let events = HerdrEvents {
         }
     }
 }
-events.start()
+events?.start()
 
 // Machine stats on their own 5s timer: CPU percentages only exist as a delta between
 // two samples, so this needs a steady cadence independent of when ticks happen.

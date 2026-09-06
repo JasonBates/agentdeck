@@ -64,9 +64,11 @@ screens, and has a 20-second per-pane cooldown.
 EventSource reconnects by itself. Swap in `NWProtocolWebSocket` only if a native iPad app
 later needs bidirectional traffic.
 
-**Every feed degrades loudly.** `herdr`, `capacity` and `host` each carry their own
-`ok`/`reason`. A dead source renders as an explicit "unavailable", never a stale value
-that still looks live. The client goes visibly stale after 12s of silence.
+**Every feed degrades loudly.** `herdr`, `events`, `capacity` and `host` each carry
+their own `ok`/`reason`. A dead source renders as an explicit "unavailable", never a
+stale value that still looks live. The client goes visibly stale after 12s of silence,
+and reads "bridge live · polling" when the bridge is up but has lost Herdr's event
+socket, since that is the difference between push latency and one-second latency.
 
 **Change-detected broadcasts, with a 5s liveness floor.** Payloads are compared
 byte-for-byte and identical ones are suppressed. Three fields had to be tamed to make
@@ -207,7 +209,9 @@ size and mtime.
 - **No auth.** The bridge binds loopback only, but anything Tailscale Serve publishes is
   reachable by every device on the tailnet. `POST /api/focus`, `/api/workspace` and
   `/api/tab` can all mutate Herdr state. Fine for a single-user tailnet; not fine if that
-  ever changes.
+  ever changes. What there is instead is validation: an id in a POST body must name a
+  pane or workspace in the last Herdr snapshot and look like one (short, printable, not a
+  flag) before it reaches `herdr` argv, and `/api/tab` is paced to one a second.
 - Card arrangement is per-device `localStorage` (`agentdeck.slots`, a paneId → cell map)
   keyed by `paneId`, and pane ids do not survive a Herdr restart — sessions do, panes
   don't. A Herdr restart scrambles a saved layout. Keying on session id would survive it,

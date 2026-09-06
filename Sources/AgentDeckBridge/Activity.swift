@@ -41,6 +41,12 @@ extension HerdrSource {
     private static let screenLock = NSLock()
     nonisolated(unsafe) private static var lastScreenRead: [String: Date] = [:]
 
+    /// Pane-keyed, so it is pruned to the live panes each tick like the other caches.
+    static func retainScreenReads(panes: Set<String>) {
+        screenLock.lock(); defer { screenLock.unlock() }
+        lastScreenRead = lastScreenRead.filter { panes.contains($0.key) }
+    }
+
     func visibleScreenThrottled(pane: String, minInterval: TimeInterval = 1.0,
                                 lines: Int = 40) -> String? {
         Self.screenLock.lock()
@@ -329,12 +335,16 @@ final class Summariser {
         logContext[pane] = (session, agent)
     }
 
-    func name(for pane: String) -> String? { nonEmpty(names[pane]?.label) }
-    func subtitle(for pane: String) -> String? { nonEmpty(subtitles[pane]?.label) }
-    func state(for pane: String) -> String? { nonEmpty(states[pane]?.label) }
+    // The subscript runs under the lock as well as the emptiness test: the summarise
+    // queue rewrites these dictionaries, and a read on the poll queue that raced a
+    // resize was a crash waiting for a busy enough afternoon.
+    func name(for pane: String) -> String? { read { $0.names[pane]?.label } }
+    func subtitle(for pane: String) -> String? { read { $0.subtitles[pane]?.label } }
+    func state(for pane: String) -> String? { read { $0.states[pane]?.label } }
 
-    private func nonEmpty(_ s: String?) -> String? {
+    private func read(_ get: (Summariser) -> String?) -> String? {
         lock.lock(); defer { lock.unlock() }
+        let s = get(self)
         return (s?.isEmpty ?? true) ? nil : s
     }
 

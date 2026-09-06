@@ -236,11 +236,21 @@
     border-color: #3c7a59;
     border-left-color: var(--idle);
   }
+  /* The dot sits in the card's top-right corner, which is where the workspace label
+     ends: without this the dot landed on the last letter of "Trinity". The header row
+     gives up the corner on exactly the cards that draw a dot there. */
+  .card.unread .row, .card.blocked .row { padding-right: 16px; }
   .card.unread::after {
     content: ''; position: absolute; top: 11px; right: 11px;
     width: 9px; height: 9px; border-radius: 50%;
     background: var(--idle); box-shadow: 0 0 0 3px rgba(78,143,109,.20);
   }
+
+  /* Finished hours ago and already looked at. Everything the card says is still true,
+     so nothing is hidden; it just stops competing with the cards that changed today.
+     The header row keeps full strength so kind and status still read at a glance, and
+     the chrome (border, wash) is untouched: the fade is on the prose, not the state. */
+  .card.aged:not(.focused) > :not(.row) { opacity: .6; }
 
   /* Blocked: the agent is waiting on you. Outranks unread — a blocked agent that has
      also just finished is still, first and foremost, something you have to answer. */
@@ -313,7 +323,11 @@
   .kind.claude { color: var(--claude); }
   .kind.codex  { color: var(--codex); }
   .kind.pi     { color: var(--pi); }
-  .ws { font-size: 11px; color: var(--dim); margin-left: auto; white-space: nowrap; }
+  /* Clipped, not wrapped: a long tab label used to run straight out of the card. */
+  .ws {
+    font-size: 11px; color: var(--dim); margin-left: auto; white-space: nowrap;
+    min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis;
+  }
   /* The tab half of the address. Dimmer than the workspace: you scan for the project
      and only then read down to which tab of it, so they aren't equal weight. */
   .ws .tab { color: var(--faint); }
@@ -340,6 +354,8 @@
     animation-delay: var(--pulse-delay, 0s);
   }
 
+  .card.starting .title { color: var(--muted); }
+  .card.starting .focus { font-family: var(--mono); font-size: 12px; }
   .title {
     font-size: 15px; line-height: 1.3; color: var(--text);
     display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
@@ -354,11 +370,16 @@
   }
 
   /* Live phase from the agent's own status line, and the model-written activity clause. */
+  /* One line, always. "2m 22s" used to break across two lines on a narrow card and the
+     token count floated off on its own; the numbers are the point, so the verb is what
+     gives way, and it is clipped with an ellipsis rather than wrapped. */
   .phase {
-    display: flex; align-items: baseline; gap: 8px;
+    display: flex; align-items: baseline; gap: 8px; min-width: 0;
     font: 12px/1.2 var(--mono); color: var(--working);
+    white-space: nowrap; overflow: hidden;
   }
-  .phase .verb { font-weight: 600; }
+  .phase .verb { font-weight: 600; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .phase .num { flex: none; }
   .phase .num { color: #a5824a; font-variant-numeric: tabular-nums; }
   .activity {
     font-size: 13px; line-height: 1.3; color: var(--muted);
@@ -455,6 +476,14 @@
   }
   .meter .who.claude { color: var(--claude); }
   .meter .who.codex { color: var(--codex); }
+  /* When the window resets, on the same line as the provider and pushed to the far
+     side. The bar tells you how much is gone; this is the only other fact that matters
+     once it is full. Quiet grey, so it reads second. */
+  .meter .reset {
+    margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    font: 9px/1 var(--mono); letter-spacing: 0; text-transform: none;
+    color: rgba(134,142,156,.55); white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
   .meter .bars {
     display: grid; grid-row: 3 / 6; grid-template-rows: 10px 7px 10px;
   }
@@ -471,7 +500,7 @@
   }
   /* Where usage would be if spent evenly up to the reset. */
   .meter .pace {
-    position: absolute; top: -4px; bottom: -4px; width: 2px;
+    position: absolute; top: -4px; bottom: -4px; width: 2px; z-index: 1;
     background: #c8d2e2; border-radius: 1px; opacity: .85;
     transform: translateX(-1px);
   }
@@ -508,6 +537,10 @@
     text-transform: uppercase; color: #8dc0a5;
   }
   .bridge-state.off { color: #d67a73; }
+  .bridge-state.polling { color: var(--working); }
+  .bridge-state.polling .bridge-dot {
+    background: var(--working); box-shadow: 0 0 0 3px rgba(224,163,74,.16);
+  }
   .bridge-dot {
     width: 7px; height: 7px; border-radius: 50%; background: var(--idle);
     box-shadow: 0 0 0 3px rgba(78,143,109,.14);
@@ -670,6 +703,7 @@
     .title { font-size: 13px; line-height: 1.25; -webkit-line-clamp: 2; }
     .focus { font-size: 10px; line-height: 1.2; -webkit-line-clamp: 1; }
     .phase { gap: 5px; font-size: 10px; }
+    .phase .tok { display: none; }   /* elapsed earns the width here; tokens don't */
     .activity { display: none; }
     .state {
       font-size: 10px; line-height: 1.25; padding-left: 6px;
@@ -903,7 +937,7 @@
     if (!p) return '';
     var bits = ['<span class="verb">' + esc(p.verb) + '</span>'];
     if (p.elapsed) bits.push('<span class="num">' + esc(p.elapsed) + '</span>');
-    if (p.tokens) bits.push('<span class="num">↓' + esc(p.tokens) + '</span>');
+    if (p.tokens) bits.push('<span class="num tok">↓' + esc(p.tokens) + '</span>');
     if (p.thinking) bits.push('<span class="num">thinking</span>');
     return '<div class="phase">' + bits.join('') + '</div>';
   }
@@ -1041,6 +1075,18 @@
     renderFooter(d);
   }
 
+  // A directory as a person would type it. The card has one line for it and the
+  // account name is the same on every card, so it is folded to a tilde.
+  function homePath(p) {
+    return String(p || '').replace(/^\/(Users|home)\/[^\/]+/, '~');
+  }
+
+  // Finished two hours ago or more, seen, and not working: still true, no longer news.
+  var AGED_AFTER = 2 * 3600;
+  function isAged(a, st, unread) {
+    return st === 'idle' && !unread && a.repliedAgo != null && a.repliedAgo >= AGED_AFTER;
+  }
+
   function cardHTML(a) {
     // Herdr reports five states: idle, working, blocked, done, unknown. The client
     // only ever handled two of them, so blocked and done rendered as anonymous grey.
@@ -1049,8 +1095,15 @@
            : (a.status === 'idle' || a.status === 'done') ? 'idle' : '';
     // Green only means "finished and unseen" — a working agent isn't finished.
     var unread = a.unread && st !== 'working';
+    // Nothing has been said yet, so there is nothing to name: Herdr's terminal title at
+    // this point is the directory, which the subtitle now shows as a directory.
+    var title = a.starting ? 'Agent starting' : a.title;
+    var focus = a.starting ? homePath(a.cwd) : a.focus;
     return '<div class="card ' + st + (unread ? ' unread' : '') +
-               (a.focused ? ' focused' : '') + '" data-pane="' + esc(a.paneId) + '">' +
+               (a.focused ? ' focused' : '') +
+               (isAged(a, st, unread) ? ' aged' : '') +
+               (a.starting ? ' starting' : '') +
+               '" data-pane="' + esc(a.paneId) + '">' +
           '<div class="row">' +
             '<span class="dot ' + st + '"></span>' +
             '<span class="kind ' + esc(a.kind) + '">' + esc(a.kind) + '</span>' +
@@ -1061,8 +1114,8 @@
               ? '<span class="bgwork"><i></i>' + esc(a.background) + '</span>' : '') +
             wsHTML(a) +
           '</div>' +
-          '<div class="title">' + esc(a.title) + '</div>' +
-          (a.focus ? '<div class="focus">' + esc(a.focus) + '</div>' : '') +
+          '<div class="title">' + esc(title) + '</div>' +
+          (focus ? '<div class="focus">' + esc(focus) + '</div>' : '') +
           phaseHTML(a.phase) +
           // Activity is a live read of the screen, so it only means anything while the
           // agent is working; on an idle card it was showing a stale present-tense
@@ -1244,6 +1297,24 @@
       modelHTML;
   }
 
+  // CodexBar describes resets in whatever shape the provider gave it: "tomorrow, 8:22 AM"
+  // from Codex, "ResetsSep10at6am(Europe/London)" scraped from Claude with its spaces
+  // gone. Same words, fewer of them, spaces back: the row is nine-point type on a
+  // 178px meter, and the zone is the one this machine is in.
+  function resetText(s) {
+    return String(s || '')
+      .replace(/^\s*resets\s*/i, '')
+      .replace(/\([^)]*\)/g, '')
+      .replace(/[\u202f\u00a0]/g, ' ')
+      .replace(/,\s*/g, ' ')
+      .replace(/(\d)\s*at\s*(\d)/i, '$1 $2')
+      .replace(/\s+at\s+/i, ' ')
+      .replace(/([A-Za-z])(\d)/g, '$1 $2')
+      .replace(/\s*([AP])M\b/i, function (_, ap) { return ap.toLowerCase() + 'm'; })
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   function renderFooter(d) {
     // footer feeds — each says so when it has nothing
     if (d.capacity && d.capacity.ok && d.capacity.providers.length) {
@@ -1264,9 +1335,13 @@
           if (w.expected != null) {
             var exp = Math.max(0, Math.min(100, w.expected));
             var lo = Math.min(exp, pct), hi = Math.max(exp, pct);
+            // The marker is drawn just inside the track at either end, so as the reset
+            // approaches and "expected" runs up to 100% the line stays on the bar
+            // rather than half off its edge.
+            var at = Math.max(1, Math.min(99, exp));
             mark = '<span class="gap ' + (pct > exp ? 'ahead' : 'behind') +
                      '" style="left:' + lo + '%;width:' + (hi - lo) + '%"></span>' +
-                   '<span class="pace" style="left:' + exp + '%" title="expected ' +
+                   '<span class="pace" style="left:' + at + '%" title="expected ' +
                      Math.round(exp) + '% by reset"></span>';
           }
           return '<span class="win">' +
@@ -1279,10 +1354,17 @@
                    '<span class="val">' + pct + '%</span>' +
                  '</span>';
         }).join('');
+        // The reset shown is the fullest window's: that is the one that will stop you.
+        var tightest = windows.reduce(function (best, w) {
+          return (!best || w.used > best.used) && w.resets ? w : best;
+        }, null);
+        var reset = tightest ? resetText(tightest.resets) : '';
         return '<div class="meter' + (p.note ? ' stale' : '') + '">' +
                  '<div class="who-row"><span class="who ' + esc(p.name) + '">' +
                    esc(p.name) + '</span>' +
                    (p.note ? '<span class="note" title="' + esc(p.note) + '">cached</span>' : '') +
+                   (reset ? '<span class="reset" title="resets ' + esc(tightest.resets) + '">' +
+                     esc(reset) + '</span>' : '') +
                  '</div>' +
                  '<div class="bars">' + (bars || '<span class="win">—</span>') + '</div>' +
                '</div>';
@@ -1295,6 +1377,11 @@
     host.textContent = d.host && d.host.ok
       ? 'load ' + d.host.load1.toFixed(1) + ' / ' + d.host.cores + ' cores'
       : 'load —';
+  }
+
+  // The Herdr event socket. An older bridge doesn't report it, and that reads as fine.
+  function eventsDown(d) {
+    return !!(d && d.events && !d.events.ok && d.herdr && d.herdr.ok);
   }
 
   function tick() {
@@ -1320,7 +1407,14 @@
     var secs = Math.round((Date.now() - lastMsg) / 1000);
     var stale = secs > 12;   // bridge republishes every 5s, so 12s means it's gone
     bridgeState.classList.toggle('off', stale);
-    bridgeState.lastElementChild.textContent = stale ? 'bridge offline' : 'bridge live';
+    // "polling": the bridge is up but has lost Herdr's event socket, so changes arrive
+    // on the one-second poll instead of by push. Still live, just slower to notice.
+    var polling = !stale && eventsDown(last);
+    bridgeState.classList.toggle('polling', polling);
+    bridgeState.lastElementChild.textContent =
+      stale ? 'bridge offline' : polling ? 'bridge live · polling' : 'bridge live';
+    bridgeState.title = polling && last.events.detail ? last.events.detail : '';
+    if (stale) reconnectIfDead();
     age.textContent = secs < 2 ? 'updated now' : 'updated ' + secs + 's ago';
     document.body.classList.toggle('stale', stale);
     live.classList.toggle('off', stale);
@@ -1563,13 +1657,40 @@
     reflow = setTimeout(function () { reflow = null; if (last) render(last); }, 120);
   });
 
-  // EventSource reconnects on its own; the stale indicator covers the gap.
-  var es = new EventSource(BASE + 'events');
-  es.onmessage = function (ev) {
-    lastMsg = Date.now();
-    try { render(JSON.parse(ev.data)); } catch (err) {}
+  // EventSource reconnects on its own for ordinary drops; the stale indicator covers
+  // the gap. It does not always come back after iOS has suspended the tab, though —
+  // Safari can leave the object closed and silent — so the stream is rebuilt whenever
+  // the page becomes visible again, or a stale reading persists, and it is closed.
+  var es = null, originRejected = false;
+  function connect() {
+    if (es) { try { es.close(); } catch (e) {} }
+    es = new EventSource(BASE + 'events');
+    es.onmessage = function (ev) {
+      lastMsg = Date.now();
+      try { render(JSON.parse(ev.data)); } catch (err) {}
+      tick();
+    };
+    es.onerror = function () { live.classList.add('off'); explainRejectedOrigin(); };
+  }
+
+  var lastReconnect = 0;
+  function reconnectIfDead() {
+    if (originRejected || !es) return;
+    // CLOSED means the browser has given up; CONNECTING for a long stale spell means
+    // it is trying and failing. Either way a fresh object costs nothing.
+    var dead = es.readyState === 2 || (Date.now() - lastMsg > 30000);
+    if (!dead || Date.now() - lastReconnect < 10000) return;
+    lastReconnect = Date.now();
+    connect();
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible' || originRejected) return;
+    // Woken: if the last frame is older than the stale threshold, don't wait to find
+    // out whether the old stream will recover.
+    if (Date.now() - lastMsg > 12000) { lastReconnect = Date.now(); connect(); }
     tick();
-  };
+  });
 
   // The bridge answers only for addresses it has been told about. Behind a proxy the
   // page still loads, so without this a missing AGENTDECK_PUBLIC_HOST looked like a dead
@@ -1583,6 +1704,7 @@
       return r.json().catch(function () { return null; });
     }).then(function (body) {
       if (!body || body.error !== 'origin_rejected') { originProbe = false; return; }
+      originRejected = true;
       es.close();
       var setting = (location.protocol === 'https:' && !location.port)
         ? 'AGENTDECK_PUBLIC_HOST=' + location.hostname
@@ -1592,7 +1714,7 @@
         '<code>' + esc(setting) + '</code><br>or pass it to Scripts/install.sh, then reload.</div>';
     }).catch(function () { originProbe = false; });
   }
-  es.onerror = function () { live.classList.add('off'); explainRejectedOrigin(); };
+  connect();
 })();
 </script>
 </body>

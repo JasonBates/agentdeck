@@ -48,9 +48,18 @@ enum HeadingLog {
             line.append(0x0A)
             lock.lock(); defer { lock.unlock() }
             guard let fh = open() else { return }
-            fh.seekToEndOfFile()
-            fh.write(line)
-            if (try? fh.offset()).map({ $0 > UInt64(maxBytes) }) == true { roll() }
+            // The throwing forms, not seekToEndOfFile/write(_:): those raise an
+            // Objective-C exception on a full disk or a handle whose file was moved,
+            // which Swift cannot catch — and best-effort logging must never take the
+            // deck down with it. On failure the handle is dropped and reopened next time.
+            do {
+                try fh.seekToEnd()
+                try fh.write(contentsOf: line)
+                if try fh.offset() > UInt64(maxBytes) { roll() }
+            } catch {
+                try? handle?.close()
+                handle = nil
+            }
         }
     }
 

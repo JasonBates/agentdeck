@@ -28,6 +28,12 @@ enum ContextReader {
     private static var cache: [String: (stamp: Date, size: Int, value: ContextUse?)] = [:]
     private static var claudePaths: [String: String] = [:]
     private static var codexPaths: [String: String] = [:]
+    /// Lookups that found nothing, with when they were tried. A pane whose transcript
+    /// does not exist yet — every new session, for its first few seconds, and any pane
+    /// Herdr reports a session for that never writes one — used to walk the whole
+    /// sessions tree on every tick. A miss is now remembered for `missTTL`.
+    private static var misses: [String: Date] = [:]
+    static let missTTL: TimeInterval = 10
 
     /// Where an agent's transcript lives. Shared with the titler, which reads the same
     /// files for their content rather than their token counts.
@@ -66,6 +72,12 @@ enum ContextReader {
 
     static func read(agent kind: String, session: HerdrAgentSession?, cwd: String) -> ContextUse? {
         guard let p = path(agent: kind, session: session, cwd: cwd) else { return nil }
+        return read(agent: kind, path: p)
+    }
+
+    /// The deck resolves the path once per agent per tick and hands it to both readers;
+    /// resolving it here as well doubled every directory scan.
+    static func read(agent kind: String, path p: String) -> ContextUse? {
         switch kind {
         case "claude": return cached(p, parse: parseClaude)
         case "pi":     return cached(p, parse: parsePi)
@@ -83,6 +95,7 @@ enum ContextReader {
             lock.unlock()
             return FileManager.default.fileExists(atPath: hit) ? hit : nil
         }
+        if missedRecently(key) { lock.unlock(); return nil }
         lock.unlock()
 
         let fm = FileManager.default
@@ -97,7 +110,16 @@ enum ContextReader {
                 return candidate
             }
         }
+        lock.lock(); misses[key] = Date(); lock.unlock()
         return nil
+    }
+
+    /// Caller holds `lock`.
+    private static func missedRecently(_ key: String) -> Bool {
+        guard let at = misses[key] else { return false }
+        if Date().timeIntervalSince(at) < missTTL { return true }
+        misses[key] = nil
+        return false
     }
 
     /// Rollout filenames embed the session uuid but also a date directory we don't know.
@@ -109,6 +131,7 @@ enum ContextReader {
             lock.unlock()
             return FileManager.default.fileExists(atPath: hit) ? hit : nil
         }
+        if missedRecently(key) { lock.unlock(); return nil }
         lock.unlock()
 
         let fm = FileManager.default
@@ -118,14 +141,24 @@ enum ContextReader {
             found = "\(root)/\(rel)"
             break
         }
-        if let found {
-            lock.lock(); codexPaths[key] = found; lock.unlock()
-        }
+        lock.lock()
+        if let found { codexPaths[key] = found } else { misses[key] = Date() }
+        lock.unlock()
         return found
     }
 
+    /// Drop per-file state for transcripts no live pane reads any more. The path memo
+    /// is keyed by session rather than path, so it is pruned to the live paths' values.
+    static func retain(paths: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        cache = cache.filter { paths.contains($0.key) }
+        claudePaths = claudePaths.filter { paths.contains($0.value) }
+        codexPaths = codexPaths.filter { paths.contains($0.value) }
+        misses = misses.filter { Date().timeIntervalSince($0.value) < missTTL }
+    }
+
     private static func cached(_ path: String,
-                               parse: (String, Int) -> ContextUse?) -> ContextUse? {
+                               parse: (String, Int, Date) -> ContextUse?) -> ContextUse? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let size = attrs[.size] as? Int,
               let mtime = attrs[.modificationDate] as? Date
@@ -138,35 +171,22 @@ enum ContextReader {
         }
         lock.unlock()
 
-        let value = parse(path, size)
+        let value = parse(path, size, mtime)
 
         lock.lock(); cache[path] = (mtime, size, value); lock.unlock()
         return value
     }
 
-    /// Reads the tail and yields decoded JSON objects newest-first.
-    private static func tailObjects(_ path: String, _ size: Int,
-                                    window: Int = 1_024 * 1024) -> [[String: Any]] {
-        guard let fh = FileHandle(forReadingAtPath: path) else { return [] }
-        defer { try? fh.close() }
-        if size > window { try? fh.seek(toOffset: UInt64(size - window)) }
-        guard let data = try? fh.readToEnd(),
-              let text = String(data: data, encoding: .utf8) else { return [] }
-
-        var out: [[String: Any]] = []
-        for line in text.components(separatedBy: .newlines).reversed() {
-            guard line.hasPrefix("{"), let d = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
-            else { continue }
-            out.append(obj)
-        }
-        return out
+    /// Newest-first JSON objects from the tail, parsed lazily and shared with the
+    /// transcript digest so a write costs one read rather than two.
+    private static func tailObjects(_ path: String, _ size: Int, _ mtime: Date) -> AnySequence<[String: Any]> {
+        JSONL.tailObjects(path, size: size, mtime: mtime)
     }
 
     // MARK: Per-agent parsers
 
-    private static func parseClaude(_ path: String, _ size: Int) -> ContextUse? {
-        for obj in tailObjects(path, size) {
+    private static func parseClaude(_ path: String, _ size: Int, _ mtime: Date) -> ContextUse? {
+        for obj in tailObjects(path, size, mtime) {
             guard let message = obj["message"] as? [String: Any],
                   let usage = message["usage"] as? [String: Any] else { continue }
             let used = (usage["input_tokens"] as? Int ?? 0)
@@ -179,8 +199,8 @@ enum ContextReader {
         return nil
     }
 
-    private static func parsePi(_ path: String, _ size: Int) -> ContextUse? {
-        for obj in tailObjects(path, size) {
+    private static func parsePi(_ path: String, _ size: Int, _ mtime: Date) -> ContextUse? {
+        for obj in tailObjects(path, size, mtime) {
             guard obj["type"] as? String == "message",
                   let message = obj["message"] as? [String: Any],
                   let usage = message["usage"] as? [String: Any] else { continue }
@@ -194,8 +214,8 @@ enum ContextReader {
         return nil
     }
 
-    private static func parseCodex(_ path: String, _ size: Int) -> ContextUse? {
-        for obj in tailObjects(path, size) {
+    private static func parseCodex(_ path: String, _ size: Int, _ mtime: Date) -> ContextUse? {
+        for obj in tailObjects(path, size, mtime) {
             guard obj["type"] as? String == "event_msg",
                   let p = obj["payload"] as? [String: Any],
                   p["type"] as? String == "token_count",

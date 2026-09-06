@@ -47,7 +47,8 @@ final class TabTitleSync {
     /// deliberately ambiguous: AgentDeck has one card title per agent but Herdr has one
     /// label per tab, so neither title gets to win silently.
     func reconcile(snapshot: HerdrSnapshot, deckAgents: [DeckAgent]) {
-        let cardsByPane = Dictionary(uniqueKeysWithValues: deckAgents.map { ($0.paneId, $0) })
+        let cardsByPane = Dictionary(deckAgents.map { ($0.paneId, $0) },
+                                     uniquingKeysWith: { a, _ in a })
         let agentsByTab = Dictionary(grouping: snapshot.agents, by: \HerdrAgent.tabId)
         let observations = snapshot.tabs.map { tab -> Observation in
             let agents = agentsByTab[tab.tabId] ?? []

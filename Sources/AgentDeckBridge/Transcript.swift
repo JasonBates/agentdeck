@@ -74,7 +74,7 @@ enum Transcript {
         // Greetings and acknowledgements, kept only in case the session has nothing else.
         var social: [String] = []
 
-        for obj in tail(path, size) {
+        for obj in tail(path, size, mtime) {
             guard let (role, raw) = message(kind: kind, obj) else { continue }
             let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard text.count > 2 else { continue }
@@ -327,22 +327,16 @@ enum Transcript {
         return !pleasantries.contains(core.joined(separator: " "))
     }
 
-    /// Newest-first objects from the tail. Codex rollouts reach 66MB, so never read whole.
-    private static func tail(_ path: String, _ size: Int,
-                             window: Int = 512 * 1024) -> [[String: Any]] {
-        guard let fh = FileHandle(forReadingAtPath: path) else { return [] }
-        defer { try? fh.close() }
-        if size > window { try? fh.seek(toOffset: UInt64(size - window)) }
-        guard let data = try? fh.readToEnd(),
-              let text = String(data: data, encoding: .utf8) else { return [] }
+    /// Newest-first objects from the tail, parsed only as far as the caller reads.
+    /// Codex rollouts reach 66MB, so never read whole. Shared with the context gauge
+    /// through JSONL so one write costs one read.
+    private static func tail(_ path: String, _ size: Int, _ mtime: Date) -> AnySequence<[String: Any]> {
+        JSONL.tailObjects(path, size: size, mtime: mtime)
+    }
 
-        var out: [[String: Any]] = []
-        for line in text.components(separatedBy: .newlines).reversed() {
-            guard line.hasPrefix("{"), let d = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
-            else { continue }
-            out.append(obj)
-        }
-        return out
+    /// Drop per-file caches for transcripts no live pane reads any more.
+    static func retain(paths: Set<String>) {
+        cacheLock.lock(); digests = digests.filter { paths.contains($0.key) }; cacheLock.unlock()
+        openingLock.lock(); openings = openings.filter { paths.contains($0.key) }; openingLock.unlock()
     }
 }

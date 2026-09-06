@@ -20,6 +20,19 @@ final class HerdrEvents {
     private var fd: Int32 = -1
     private var stopped = false
     private let queue = DispatchQueue(label: "agentdeck.events")
+    private let statusLock = NSLock()
+    private var current = FeedStatus(ok: false, detail: "not started")
+
+    /// Whether the subscription is live, for the payload. Every other feed says when it
+    /// is down; this one used to fall back to polling in silence.
+    var status: FeedStatus {
+        statusLock.lock(); defer { statusLock.unlock() }
+        return current
+    }
+
+    private func report(ok: Bool, _ detail: String) {
+        statusLock.lock(); current = FeedStatus(ok: ok, detail: detail); statusLock.unlock()
+    }
 
     /// Only three subscriptions take a pane_id (output_matched, agent_status_changed,
     /// scroll_changed) and would need re-subscribing as panes come and go. These are
@@ -51,10 +64,12 @@ final class HerdrEvents {
         while !stopped {
             if connectAndRead() {
                 backoff = 1               // clean session; reconnect promptly
+                report(ok: false, "socket closed, reconnecting")
             } else {
                 // Herdr restarted or the socket went away. Back off to 8s so a stopped
                 // Herdr doesn't spin, and keep polling in the meantime — the safety-net
                 // timer is what carries the deck while events are unavailable.
+                report(ok: false, "socket unavailable, polling; retry in \(backoff)s")
                 sleep(backoff)
                 backoff = min(backoff * 2, 8)
             }
@@ -122,6 +137,7 @@ final class HerdrEvents {
                 if let result = obj["result"] as? [String: Any],
                    result["type"] as? String == "subscription_started" {
                     established = true
+                    report(ok: true, "subscribed")
                     Summariser.debug("events: subscribed to \(Self.subscriptions.count) types")
                     continue
                 }

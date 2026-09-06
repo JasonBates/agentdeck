@@ -12,6 +12,10 @@ import Darwin
 /// The client derives "Xs ago" from when the frame arrived.
 struct DeckPayload: Encodable {
     var herdr: FeedStatus
+    /// The Herdr event socket. When it is down the deck still works on the 1s poll, but
+    /// focus changes arrive half a second late rather than in tens of milliseconds — a
+    /// degradation worth saying out loud, like every other feed's.
+    var events: FeedStatus
     var workspaces: [DeckWorkspace] // repository groups; name retained for wire compatibility
     var agents: [DeckAgent]
     var capacity: CapacityFeed
@@ -44,6 +48,10 @@ struct DeckAgent: Encodable {
     var focused: Bool
     var title: String       // model-written session name, or the Herdr-derived fallback
     var titleSource: String // "model" | "herdr"
+    /// No readable transcript content yet: the session has been created and nothing has
+    /// been said. The page shows a placeholder title and the directory instead of
+    /// Herdr's terminal title, which at this point is just the directory too.
+    var starting: Bool
     var focus: String?      // where the last five turns have got to
     var state: String?      // finished / next / waiting-on, from the latest reply
     var unread: Bool        // replied since you last had this pane focused
@@ -141,10 +149,18 @@ enum Deck {
     static func payload(from snap: HerdrSnapshot,
                         herdrDetail: String?,
                         source: HerdrSource?,
-                        summariser: Summariser?) -> DeckPayload {
-        let wsById = Dictionary(uniqueKeysWithValues: snap.workspaces.map { ($0.workspaceId, $0) })
-        let tabById = Dictionary(uniqueKeysWithValues: snap.tabs.map { ($0.tabId, $0) })
+                        summariser: Summariser?,
+                        events: FeedStatus = FeedStatus(ok: false, detail: "not started")) -> DeckPayload {
+        // Herdr should never repeat an id, but a duplicate in someone else's output
+        // must not trap the bridge into a restart loop. First sighting wins.
+        let wsById = Dictionary(snap.workspaces.map { ($0.workspaceId, $0) },
+                                uniquingKeysWith: { a, _ in a })
+        let tabById = Dictionary(snap.tabs.map { ($0.tabId, $0) },
+                                 uniquingKeysWith: { a, _ in a })
 
+        // Transcript paths the live panes read, collected as they are resolved so the
+        // cache pruning below doesn't resolve them all a second time.
+        var livePaths = Set<String>()
         let agents: [DeckAgent] = snap.agents.map { a in
             let ws = wsById[a.workspaceId]
             let tab = tabById[a.tabId]
@@ -188,7 +204,12 @@ enum Deck {
                     background = BackgroundLine.summary(BackgroundLine.parse(screen))
                     Deck.phaseCache[a.paneId] = phase
                     Deck.backgroundCache[a.paneId] = background
-                    summariser?.consider(pane: a.paneId, screen: screen)
+                    // The activity label is only shown when there is no outcome, so
+                    // generating one while an outcome stands just occupies the model
+                    // ahead of the title, subtitle and outcome jobs that do show.
+                    if summariser?.state(for: a.paneId) == nil {
+                        summariser?.consider(pane: a.paneId, screen: screen)
+                    }
                 } else {
                     // Throttled tick: hold the last reading rather than blanking the
                     // line, which would flicker it on and off between reads.
@@ -215,6 +236,7 @@ enum Deck {
             let wantsName = Deck.namingMode == "all" || titleWasGeneric
             var digest: TranscriptDigest?
             if let transcript {
+                livePaths.insert(transcript)
                 digest = Transcript.digest(agent: a.agent, path: transcript)
             }
             if wantsName, let summariser, let digest {
@@ -250,6 +272,7 @@ enum Deck {
                 // a 3b model summarising the same transcript tends to do worse.
                 title: modelName ?? title,
                 titleSource: modelName != nil ? "model" : "herdr",
+                starting: digest == nil,
                 focus: focus,
                 state: state,
                 unread: read.unread,
@@ -267,9 +290,7 @@ enum Deck {
                 phase: phase,
                 background: background,
                 activity: summariser?.label(for: a.paneId),
-                context: ContextReader.read(agent: a.agent,
-                                            session: a.agentSession,
-                                            cwd: a.cwd)
+                context: transcript.flatMap { ContextReader.read(agent: a.agent, path: $0) }
             )
         }
 
@@ -280,6 +301,12 @@ enum Deck {
         let live = Set(agents.map(\.paneId))
         Deck.phaseCache = Deck.phaseCache.filter { live.contains($0.key) }
         Deck.backgroundCache = Deck.backgroundCache.filter { live.contains($0.key) }
+        HerdrSource.retainScreenReads(panes: live)
+        // The per-file caches are keyed by transcript path and were never pruned, so
+        // they grew for the life of the process — slowly, but a bridge runs for weeks.
+        Transcript.retain(paths: livePaths)
+        ContextReader.retain(paths: livePaths)
+        JSONL.retain(paths: livePaths)
 
         // No sorting, deliberately. Any server-side ordering rule moves a card exactly
         // when you're looking at it — on focus, on starting work. Herdr's own order is
@@ -342,6 +369,7 @@ enum Deck {
 
         return DeckPayload(
             herdr: FeedStatus(ok: true, detail: herdrDetail),
+            events: events,
             workspaces: workspaces,
             // Fixed positions, ordered the way the panes are laid out in Herdr.
             // Sorting by status or focus meant a card jumped across the grid the moment
@@ -354,9 +382,11 @@ enum Deck {
         )
     }
 
-    static func failed(_ reason: String) -> DeckPayload {
+    static func failed(_ reason: String,
+                       events: FeedStatus = FeedStatus(ok: false, detail: "not started")) -> DeckPayload {
         DeckPayload(
             herdr: FeedStatus(ok: false, detail: reason),
+            events: events,
             workspaces: [], agents: [],
             capacity: Capacity.read(),
             host: HostFeed.read(),
@@ -438,7 +468,23 @@ enum Capacity {
         try? FileManager.default.createDirectory(
             atPath: (cachePath as NSString).deletingLastPathComponent,
             withIntermediateDirectories: true)
-        try? data.write(to: URL(fileURLWithPath: cachePath))
+        try? data.write(to: URL(fileURLWithPath: cachePath), options: .atomic)
+    }
+
+    /// What the feed says when the whole probe failed. The persisted readings exist for
+    /// exactly this case, but the failure branches used to store an empty provider list
+    /// and never consult them — so the cache was written on every success and read on
+    /// none of the failures it was written for.
+    private static func carried(_ reason: String) -> CapacityFeed {
+        guard !lastGood.isEmpty else {
+            return CapacityFeed(ok: false, reason: reason, providers: [])
+        }
+        let providers = lastGood.values.sorted { $0.name < $1.name }.map { p -> CapacityProvider in
+            var c = p
+            c.note = "last good — \(reason)"
+            return c
+        }
+        return CapacityFeed(ok: true, reason: reason, providers: providers)
     }
 
     /// Free — hands back whatever the last background refresh produced. This used to
@@ -466,7 +512,7 @@ enum Capacity {
                   let arr = try JSONSerialization.jsonObject(with: Data(data[start...]))
                     as? [[String: Any]]
             else {
-                store(CapacityFeed(ok: false, reason: "unexpected codexbar output", providers: []))
+                store(carried("unexpected codexbar output"))
                 return
             }
 
@@ -513,14 +559,14 @@ enum Capacity {
                                          label: parts.joined(separator: " "),
                                          windows: windows, note: nil)
                 lastGood[name] = p
-                saveLastGood()
                 out.append(p)
             }
+            if out.contains(where: { $0.note == nil }) { saveLastGood() }
             store(out.isEmpty
-                  ? CapacityFeed(ok: false, reason: "no quota windows reported", providers: [])
+                  ? carried("no quota windows reported")
                   : CapacityFeed(ok: true, reason: nil, providers: out))
         } catch {
-            store(CapacityFeed(ok: false, reason: "codexbar failed", providers: []))
+            store(carried("codexbar failed"))
         }
     }
 
