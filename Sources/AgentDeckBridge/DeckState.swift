@@ -81,9 +81,15 @@ struct CapacityWindow: Encodable {
     var span: String        // "5h" | "wk"
     var used: Double
     /// Where usage *should* be if it were spent evenly up to the reset. CodexBar
-    /// computes this in its `pace` block, so it isn't re-derived here.
+    /// computes this in its `pace` block for some providers and not others; where it
+    /// doesn't, the bridge derives it from `resetsAt` and the window length.
     var expected: Double?
+    /// The provider's own prose — "Sep 15 at 9:16 AM" from Codex,
+    /// "ResetsSep10at6am(Europe/London)" from Claude. Kept for the tooltip.
     var resets: String?
+    /// The same instant as an ISO timestamp. Both providers report one, and it is the
+    /// only form the deck can render on its own terms rather than theirs.
+    var resetsAt: String?
 }
 
 struct CapacityProvider: Encodable {
@@ -441,7 +447,8 @@ enum Capacity {
                 else { return nil }
                 return CapacityWindow(span: span, used: used,
                                       expected: w["expected"] as? Double,
-                                      resets: w["resets"] as? String)
+                                      resets: w["resets"] as? String,
+                                      resetsAt: w["resetsAt"] as? String)
             }
             out[name] = CapacityProvider(name: name,
                                          percentUsed: d["percentUsed"] as? Double,
@@ -461,6 +468,7 @@ enum Capacity {
                     var d: [String: Any] = ["span": w.span, "used": w.used]
                     if let e = w.expected { d["expected"] = e }
                     if let r = w.resets { d["resets"] = r }
+                    if let r = w.resetsAt { d["resetsAt"] = r }
                     return d
                 },
             ]
@@ -497,78 +505,124 @@ enum Capacity {
         return cached
     }
 
+    /// The providers codexbar is asked about, each in its own invocation. `--provider
+    /// both` shares one deadline between the two probes, and Claude's — which needs
+    /// ~26-50s of scraping on its own — lost that race often enough that the meter
+    /// spent much of the day showing a carried reading. Probed singly it has not
+    /// failed. Two sequential scrapes are still well inside the 5-minute timer, and a
+    /// slow provider can no longer starve the other one.
+    private static let probes = ["codex", "claude"]
+
     static func refresh() {
         guard let bin = Shell.which("codexbar") else {
             store(CapacityFeed(ok: false, reason: "codexbar not installed", providers: []))
             return
         }
-        do {
-            // ~47s: it scrapes the provider dashboards. Fine on a 5-minute timer, and
-            // exit 1 with valid JSON on stdout is its normal success path.
-            let data = try Shell.run(bin, ["usage", "--provider", "both", "--json"],
-                                     timeout: 120, allowFailure: true)
-            // stdout is prefixed with lines like "[codex notify] remoteControl/status/changed",
-            // so the JSON does not start at byte zero.
-            guard let start = data.firstIndex(of: UInt8(ascii: "[")),
-                  let arr = try JSONSerialization.jsonObject(with: Data(data[start...]))
+        var entries: [[String: Any]] = []
+        var reached = false
+        for provider in probes {
+            // exit 1 with valid JSON on stdout is codexbar's normal success path.
+            guard let data = try? Shell.run(bin, ["usage", "--provider", provider, "--json"],
+                                            timeout: 120, allowFailure: true),
+                  // stdout is prefixed with lines like "[codex notify] remoteControl/…",
+                  // so the JSON does not start at byte zero.
+                  let start = data.firstIndex(of: UInt8(ascii: "[")),
+                  let arr = try? JSONSerialization.jsonObject(with: Data(data[start...]))
                     as? [[String: Any]]
-            else {
-                store(carried("unexpected codexbar output"))
-                return
-            }
-
-            var out: [CapacityProvider] = []
-            for entry in arr {
-                let name = entry["provider"] as? String ?? "?"
-
-                // Providers fail independently and intermittently — Claude's probe times
-                // out fairly often. Carry the last good reading rather than blanking the
-                // meter, but say that it's carried.
-                if let err = entry["error"] as? [String: Any] {
-                    let msg = (err["message"] as? String) ?? "unavailable"
-                    if var prev = lastGood[name] {
-                        prev.note = "last good — \(msg)"
-                        out.append(prev)
-                    } else {
-                        out.append(CapacityProvider(name: name, percentUsed: nil,
-                                                    label: "", windows: [], note: msg))
-                    }
-                    continue
-                }
-
-                guard let usage = entry["usage"] as? [String: Any] else { continue }
-                let pace = entry["pace"] as? [String: Any]
-
-                // primary is the short rolling window (300 min on Claude), secondary the
-                // weekly one (10080). Either may be null depending on the provider.
-                var parts: [String] = []
-                var windows: [CapacityWindow] = []
-                var headline: Double?
-                for key in ["primary", "secondary"] {
-                    guard let w = usage[key] as? [String: Any],
-                          let pct = w["usedPercent"] as? Double else { continue }
-                    let mins = w["windowMinutes"] as? Int ?? 0
-                    let span = mins >= 10080 ? "wk" : (mins >= 60 ? "\(mins / 60)h" : "\(mins)m")
-                    let expected = (pace?[key] as? [String: Any])?["expectedUsedPercent"] as? Double
-                    windows.append(CapacityWindow(span: span, used: pct, expected: expected,
-                                                  resets: w["resetDescription"] as? String))
-                    parts.append(String(format: "%@ %.0f%%", span, pct))
-                    if headline == nil { headline = pct }
-                }
-                guard !windows.isEmpty else { continue }
-                let p = CapacityProvider(name: name, percentUsed: headline,
-                                         label: parts.joined(separator: " "),
-                                         windows: windows, note: nil)
-                lastGood[name] = p
-                out.append(p)
-            }
-            if out.contains(where: { $0.note == nil }) { saveLastGood() }
-            store(out.isEmpty
-                  ? carried("no quota windows reported")
-                  : CapacityFeed(ok: true, reason: nil, providers: out))
-        } catch {
-            store(carried("codexbar failed"))
+            else { continue }
+            reached = true
+            entries.append(contentsOf: arr)
         }
+        guard reached else {
+            store(carried("codexbar failed"))
+            return
+        }
+
+        var out: [CapacityProvider] = []
+        for entry in entries {
+            let name = entry["provider"] as? String ?? "?"
+
+            // Providers fail independently and intermittently — Claude's probe times
+            // out fairly often. Carry the last good reading rather than blanking the
+            // meter, but say that it's carried.
+            if let err = entry["error"] as? [String: Any] {
+                let msg = (err["message"] as? String) ?? "unavailable"
+                if var prev = lastGood[name] {
+                    prev.note = "last good — \(msg)"
+                    out.append(prev)
+                } else {
+                    out.append(CapacityProvider(name: name, percentUsed: nil,
+                                                label: "", windows: [], note: msg))
+                }
+                continue
+            }
+
+            guard let usage = entry["usage"] as? [String: Any] else { continue }
+            let pace = entry["pace"] as? [String: Any]
+
+            // primary is the short rolling window (300 min on Claude), secondary the
+            // weekly one (10080). Either may be null depending on the provider.
+            var parts: [String] = []
+            var windows: [CapacityWindow] = []
+            var headline: Double?
+            for key in ["primary", "secondary"] {
+                guard let w = usage[key] as? [String: Any],
+                      let pct = w["usedPercent"] as? Double else { continue }
+                let mins = w["windowMinutes"] as? Int ?? 0
+                let span = mins >= 10080 ? "wk" : (mins >= 60 ? "\(mins / 60)h" : "\(mins)m")
+                let expected = (pace?[key] as? [String: Any])?["expectedUsedPercent"] as? Double
+                    ?? evenPace(windowMinutes: mins, resetsAt: w["resetsAt"] as? String)
+                windows.append(CapacityWindow(span: span, used: pct, expected: expected,
+                                              resets: w["resetDescription"] as? String,
+                                              resetsAt: w["resetsAt"] as? String))
+                parts.append(String(format: "%@ %.0f%%", span, pct))
+                if headline == nil { headline = pct }
+            }
+            guard !windows.isEmpty else { continue }
+            let p = CapacityProvider(name: name, percentUsed: headline,
+                                     label: parts.joined(separator: " "),
+                                     windows: windows, note: nil)
+            lastGood[name] = p
+            out.append(p)
+        }
+
+        // A probe that produced no parsable output at all says nothing about the
+        // provider, so its meter should carry rather than disappear — a missing row
+        // reads as "you have no Claude quota", which is the wrong thing to believe.
+        for provider in probes where !out.contains(where: { $0.name == provider }) {
+            guard var prev = lastGood[provider] else { continue }
+            prev.note = "last good — probe failed"
+            out.append(prev)
+        }
+
+        if out.contains(where: { $0.note == nil }) { saveLastGood() }
+        store(out.isEmpty
+              ? carried("no quota windows reported")
+              : CapacityFeed(ok: true, reason: nil, providers: out))
+    }
+
+    /// Even-spend pace for a provider that doesn't publish one. codexbar computes a
+    /// `pace` block for Claude and none at all for Codex, so the Codex meter drew a
+    /// fill with nothing to read it against — the one bar on the rail that couldn't
+    /// tell you whether you were ahead or behind. The window opened `windowMinutes`
+    /// before it resets, so how far through it we are is exactly the share an even
+    /// spend would have used by now.
+    private static func evenPace(windowMinutes mins: Int, resetsAt: String?) -> Double? {
+        guard mins > 0, let s = resetsAt, let at = parseISO(s) else { return nil }
+        let elapsed = Double(mins) - at.timeIntervalSinceNow / 60
+        guard elapsed > 0 else { return nil }
+        return min(100, elapsed / Double(mins) * 100)
+    }
+
+    private static let iso = ISO8601DateFormatter()
+    private static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static func parseISO(_ s: String) -> Date? {
+        iso.date(from: s) ?? isoFractional.date(from: s)
     }
 
     private static func store(_ f: CapacityFeed) {

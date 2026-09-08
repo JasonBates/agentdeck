@@ -1330,6 +1330,35 @@
       modelHTML;
   }
 
+  var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  // Every reset is within the coming week, so the weekday is the shortest form that
+  // still says when — "Thu 6:00am" lands without the arithmetic "Sep 10" needs. Today
+  // is named rather than dated for the same reason: the 5h window nearly always
+  // resets today, and "today" is the one word that reads at a glance.
+  function resetLabel(w) {
+    var at = w && w.resetsAt ? new Date(w.resetsAt) : null;
+    if (at && !isNaN(at.getTime())) {
+      var now = new Date();
+      var days = Math.round(
+        (new Date(at.getFullYear(), at.getMonth(), at.getDate()) -
+         new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+      // hour12 explicitly: this machine's locale renders 24-hour, which drops the
+      // am/pm the other rows carry and leaves two providers reading differently.
+      var time = at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit',
+                                                  hour12: true })
+        .replace(/[\u202f\u00a0]/g, ' ')
+        .replace(/\s*([AP])M\b/i, function (_, ap) { return ap.toLowerCase() + 'm'; });
+      if (days === 0) return 'today ' + time;
+      if (days >= 1 && days <= 6) return DAYS[at.getDay()] + ' ' + time;
+      // A weekly window is 7 days long, so for the first day of one the bare weekday
+      // is today's own name. Say which one is meant rather than falling back to a date.
+      if (days === 7) return 'next ' + DAYS[at.getDay()] + ' ' + time;
+    }
+    return resetText(w && w.resets);
+  }
+
+  // Fallback for a provider that reports no instant, or one further out than a week.
   // CodexBar describes resets in whatever shape the provider gave it: "tomorrow, 8:22 AM"
   // from Codex, "ResetsSep10at6am(Europe/London)" scraped from Claude with its spaces
   // gone. Same words, fewer of them, spaces back: the row is nine-point type on a
@@ -1391,7 +1420,7 @@
         var tightest = windows.reduce(function (best, w) {
           return (!best || w.used > best.used) && w.resets ? w : best;
         }, null);
-        var reset = tightest ? resetText(tightest.resets) : '';
+        var reset = tightest ? resetLabel(tightest) : '';
         return '<div class="meter' + (p.note ? ' stale' : '') + '">' +
                  '<div class="who-row"><span class="who ' + esc(p.name) + '">' +
                    esc(p.name) + '</span>' +
