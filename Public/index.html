@@ -1350,10 +1350,10 @@
         .replace(/[\u202f\u00a0]/g, ' ')
         .replace(/\s*([AP])M\b/i, function (_, ap) { return ap.toLowerCase() + 'm'; });
       if (days === 0) return 'today ' + time;
-      if (days >= 1 && days <= 6) return DAYS[at.getDay()] + ' ' + time;
-      // A weekly window is 7 days long, so for the first day of one the bare weekday
-      // is today's own name. Say which one is meant rather than falling back to a date.
-      if (days === 7) return 'next ' + DAYS[at.getDay()] + ' ' + time;
+      // A weekly window on its first day is seven out, so the weekday comes back round
+      // to today's own name. It needs no qualifier: the pace mark next to it is barely
+      // off the left edge, which says "a week away" more directly than a word would.
+      if (days >= 1 && days <= 7) return DAYS[at.getDay()] + ' ' + time;
     }
     return resetText(w && w.resets);
   }

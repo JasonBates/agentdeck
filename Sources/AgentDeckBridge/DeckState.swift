@@ -429,6 +429,21 @@ enum Capacity {
     /// Persisted, because in memory alone it was lost on every restart — which is
     /// exactly when a flaky provider looks permanently missing rather than merely stale.
     nonisolated(unsafe) private static var lastGood: [String: CapacityProvider] = loadLastGood()
+    /// When each of those was taken, so a carried reading can say how old it is.
+    nonisolated(unsafe) private static var lastGoodAt: [String: Date] = loadLastGoodAt()
+
+    /// How long a carried reading still counts as current. A quota window moves by a
+    /// few percent an hour, so one taken three refreshes ago is not misleading — and a
+    /// badge that lights on every intermittent probe failure is a badge you learn to
+    /// ignore, which costs you the one case where the reading really is stale.
+    static let staleAfter: TimeInterval = 15 * 60
+
+    /// The note a carried reading carries, or nil while it is still recent enough to
+    /// stand as current.
+    private static func staleNote(_ name: String, _ reason: String) -> String? {
+        let at = lastGoodAt[name] ?? .distantPast
+        return Date().timeIntervalSince(at) > staleAfter ? "last good — \(reason)" : nil
+    }
 
     private static var cachePath: String {
         "\(NSHomeDirectory())/.cache/agentdeck/capacity.json"
@@ -458,12 +473,25 @@ enum Capacity {
         return out
     }
 
+    private static func loadLastGoodAt() -> [String: Date] {
+        guard let data = FileManager.default.contents(atPath: cachePath),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+        var out: [String: Date] = [:]
+        for (name, raw) in obj {
+            guard let d = raw as? [String: Any], let at = d["at"] as? Double else { continue }
+            out[name] = Date(timeIntervalSince1970: at)
+        }
+        return out
+    }
+
     private static func saveLastGood() {
         var obj: [String: Any] = [:]
         for (name, p) in lastGood {
             obj[name] = [
                 "percentUsed": p.percentUsed as Any,
                 "label": p.label,
+                "at": (lastGoodAt[name] ?? Date()).timeIntervalSince1970,
                 "windows": p.windows.map { w -> [String: Any] in
                     var d: [String: Any] = ["span": w.span, "used": w.used]
                     if let e = w.expected { d["expected"] = e }
@@ -490,7 +518,7 @@ enum Capacity {
         }
         let providers = lastGood.values.sorted { $0.name < $1.name }.map { p -> CapacityProvider in
             var c = p
-            c.note = "last good — \(reason)"
+            c.note = staleNote(p.name, reason)
             return c
         }
         return CapacityFeed(ok: true, reason: reason, providers: providers)
@@ -512,6 +540,22 @@ enum Capacity {
     /// failed. Two sequential scrapes are still well inside the 5-minute timer, and a
     /// slow provider can no longer starve the other one.
     private static let probes = ["codex", "claude"]
+    private static let attempts = 2
+
+    /// One scrape. Nil means codexbar said nothing we could read; an array containing
+    /// an `error` entry means it ran and the provider itself failed.
+    private static func probe(_ bin: String, _ provider: String) -> [[String: Any]]? {
+        // exit 1 with valid JSON on stdout is codexbar's normal success path.
+        guard let data = try? Shell.run(bin, ["usage", "--provider", provider, "--json"],
+                                        timeout: 120, allowFailure: true),
+              // stdout is prefixed with lines like "[codex notify] remoteControl/…",
+              // so the JSON does not start at byte zero.
+              let start = data.firstIndex(of: UInt8(ascii: "[")),
+              let arr = try? JSONSerialization.jsonObject(with: Data(data[start...]))
+                as? [[String: Any]]
+        else { return nil }
+        return arr
+    }
 
     static func refresh() {
         guard let bin = Shell.which("codexbar") else {
@@ -521,17 +565,17 @@ enum Capacity {
         var entries: [[String: Any]] = []
         var reached = false
         for provider in probes {
-            // exit 1 with valid JSON on stdout is codexbar's normal success path.
-            guard let data = try? Shell.run(bin, ["usage", "--provider", provider, "--json"],
-                                            timeout: 120, allowFailure: true),
-                  // stdout is prefixed with lines like "[codex notify] remoteControl/…",
-                  // so the JSON does not start at byte zero.
-                  let start = data.firstIndex(of: UInt8(ascii: "[")),
-                  let arr = try? JSONSerialization.jsonObject(with: Data(data[start...]))
-                    as? [[String: Any]]
-            else { continue }
-            reached = true
-            entries.append(contentsOf: arr)
+            // Claude's scrape fails intermittently even with the deadline to itself. A
+            // failed one is cheap to repeat and the second attempt usually lands, so
+            // only a provider that fails twice running falls back on its last reading.
+            var latest: [[String: Any]]?
+            for _ in 1...attempts {
+                guard let arr = probe(bin, provider) else { continue }
+                reached = true
+                latest = arr
+                if !arr.contains(where: { $0["error"] != nil }) { break }
+            }
+            if let latest { entries.append(contentsOf: latest) }
         }
         guard reached else {
             store(carried("codexbar failed"))
@@ -548,7 +592,7 @@ enum Capacity {
             if let err = entry["error"] as? [String: Any] {
                 let msg = (err["message"] as? String) ?? "unavailable"
                 if var prev = lastGood[name] {
-                    prev.note = "last good — \(msg)"
+                    prev.note = staleNote(name, msg)
                     out.append(prev)
                 } else {
                     out.append(CapacityProvider(name: name, percentUsed: nil,
@@ -583,6 +627,7 @@ enum Capacity {
                                      label: parts.joined(separator: " "),
                                      windows: windows, note: nil)
             lastGood[name] = p
+            lastGoodAt[name] = Date()
             out.append(p)
         }
 
@@ -591,7 +636,7 @@ enum Capacity {
         // reads as "you have no Claude quota", which is the wrong thing to believe.
         for provider in probes where !out.contains(where: { $0.name == provider }) {
             guard var prev = lastGood[provider] else { continue }
-            prev.note = "last good — probe failed"
+            prev.note = staleNote(provider, "probe failed")
             out.append(prev)
         }
 
