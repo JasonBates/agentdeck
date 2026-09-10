@@ -525,6 +525,18 @@
     position: absolute; top: 0; bottom: 0; border-radius: 2px; pointer-events: none;
   }
   .meter .gap.behind { background: rgba(78,143,109,.28); }
+  /* A per-model share of the same window, Claude's Fable-only weekly. Drawn as a pair
+     of orange dots straddling the track rather than a second tick, so it can never be
+     mistaken for the pace mark. It usually runs ahead of the all-models fill and is
+     the limit that stops you, so it sits above both the fill and the pace mark. */
+  .meter .scoped { position: absolute; top: 0; bottom: 0; width: 0; z-index: 2; }
+  .meter .scoped::before, .meter .scoped::after {
+    content: ''; position: absolute; left: -2px; width: 4px; height: 4px;
+    border-radius: 50%; background: var(--working);
+  }
+  .meter .scoped::before { top: -6px; }
+  .meter .scoped::after { bottom: -6px; }
+  .meter .scoped.hot::before, .meter .scoped.hot::after { background: var(--dead); }
   .meter .gap.ahead  { background: rgba(224,163,74,.30); }
   .meter .fill {
     display: block; height: 100%; min-width: 3px; border-radius: 3px;
@@ -743,6 +755,11 @@
     .meter .span { width: 17px; font-size: 8px; }
     .meter .track { height: 4px; }
     .meter .pace { top: -3px; bottom: -3px; width: 1px; }
+    .meter .scoped::before, .meter .scoped::after {
+      left: -1.5px; width: 3px; height: 3px;
+    }
+    .meter .scoped::before { top: -5px; }
+    .meter .scoped::after { bottom: -5px; }
     .meter .val { width: 26px; font-size: 8px; }
     .sys { display: none; }
     footer .spacer { display: block; flex: 1; }
@@ -1405,6 +1422,14 @@
                      '" style="left:' + lo + '%;width:' + (hi - lo) + '%"></span>' +
                    '<span class="pace" style="left:' + at + '%" title="expected ' +
                      Math.round(exp) + '% by reset"></span>';
+          }
+          // A per-model share of the same window — Claude's Fable-only weekly. It is the
+          // limit that tends to bind first, so it gets its own tick above the fill.
+          if (w.scoped != null) {
+            var sp = Math.round(w.scoped);
+            mark += '<span class="scoped' + (sp >= 85 ? ' hot' : '') +
+                      '" style="left:' + Math.max(1, Math.min(99, sp)) + '%" title="' +
+                      esc(w.scopedLabel || 'scoped') + ' only ' + sp + '%"></span>';
           }
           return '<span class="win">' +
                    '<span class="span">' + esc(w.span) + '</span>' +

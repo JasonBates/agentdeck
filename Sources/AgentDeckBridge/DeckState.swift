@@ -90,6 +90,13 @@ struct CapacityWindow: Encodable {
     /// The same instant as an ISO timestamp. Both providers report one, and it is the
     /// only form the deck can render on its own terms rather than theirs.
     var resetsAt: String?
+    /// A per-model share of the same window, where the provider caps one model more
+    /// tightly than the plan as a whole: Claude's "Fable only" weekly sits inside its
+    /// weekly. It is the limit most likely to bind first, so the deck draws it as a
+    /// tick on the parent bar rather than dropping it.
+    var scoped: Double?
+    /// What the share is scoped to — "Fable" — for the tick's tooltip.
+    var scopedLabel: String?
 }
 
 struct CapacityProvider: Encodable {
@@ -463,7 +470,9 @@ enum Capacity {
                 return CapacityWindow(span: span, used: used,
                                       expected: w["expected"] as? Double,
                                       resets: w["resets"] as? String,
-                                      resetsAt: w["resetsAt"] as? String)
+                                      resetsAt: w["resetsAt"] as? String,
+                                      scoped: w["scoped"] as? Double,
+                                      scopedLabel: w["scopedLabel"] as? String)
             }
             out[name] = CapacityProvider(name: name,
                                          percentUsed: d["percentUsed"] as? Double,
@@ -497,6 +506,8 @@ enum Capacity {
                     if let e = w.expected { d["expected"] = e }
                     if let r = w.resets { d["resets"] = r }
                     if let r = w.resetsAt { d["resetsAt"] = r }
+                    if let s = w.scoped { d["scoped"] = s }
+                    if let l = w.scopedLabel { d["scopedLabel"] = l }
                     return d
                 },
             ]
@@ -601,31 +612,7 @@ enum Capacity {
                 continue
             }
 
-            guard let usage = entry["usage"] as? [String: Any] else { continue }
-            let pace = entry["pace"] as? [String: Any]
-
-            // primary is the short rolling window (300 min on Claude), secondary the
-            // weekly one (10080). Either may be null depending on the provider.
-            var parts: [String] = []
-            var windows: [CapacityWindow] = []
-            var headline: Double?
-            for key in ["primary", "secondary"] {
-                guard let w = usage[key] as? [String: Any],
-                      let pct = w["usedPercent"] as? Double else { continue }
-                let mins = w["windowMinutes"] as? Int ?? 0
-                let span = mins >= 10080 ? "wk" : (mins >= 60 ? "\(mins / 60)h" : "\(mins)m")
-                let expected = (pace?[key] as? [String: Any])?["expectedUsedPercent"] as? Double
-                    ?? evenPace(windowMinutes: mins, resetsAt: w["resetsAt"] as? String)
-                windows.append(CapacityWindow(span: span, used: pct, expected: expected,
-                                              resets: w["resetDescription"] as? String,
-                                              resetsAt: w["resetsAt"] as? String))
-                parts.append(String(format: "%@ %.0f%%", span, pct))
-                if headline == nil { headline = pct }
-            }
-            guard !windows.isEmpty else { continue }
-            let p = CapacityProvider(name: name, percentUsed: headline,
-                                     label: parts.joined(separator: " "),
-                                     windows: windows, note: nil)
+            guard let p = parseProvider(entry) else { continue }
             lastGood[name] = p
             lastGoodAt[name] = Date()
             out.append(p)
@@ -644,6 +631,51 @@ enum Capacity {
         store(out.isEmpty
               ? carried("no quota windows reported")
               : CapacityFeed(ok: true, reason: nil, providers: out))
+    }
+
+    /// One provider's reading from a codexbar entry, or nil where it reports no windows.
+    static func parseProvider(_ entry: [String: Any]) -> CapacityProvider? {
+        let name = entry["provider"] as? String ?? "?"
+        guard let usage = entry["usage"] as? [String: Any] else { return nil }
+        let pace = entry["pace"] as? [String: Any]
+
+        // Claude caps Fable more tightly than the plan as a whole, and codexbar reports
+        // that share as an extra window of the same length as the weekly one. Codex's
+        // extra windows are Spark's own allowances, not a share of the main one, so
+        // only Claude's are folded onto a parent bar.
+        let scopedWindows = name == "claude"
+            ? (usage["extraRateWindows"] as? [[String: Any]] ?? []) : []
+
+        // primary is the short rolling window (300 min on Claude), secondary the
+        // weekly one (10080). Either may be null depending on the provider.
+        var parts: [String] = []
+        var windows: [CapacityWindow] = []
+        var headline: Double?
+        for key in ["primary", "secondary"] {
+            guard let w = usage[key] as? [String: Any],
+                  let pct = w["usedPercent"] as? Double else { continue }
+            let mins = w["windowMinutes"] as? Int ?? 0
+            let span = mins >= 10080 ? "wk" : (mins >= 60 ? "\(mins / 60)h" : "\(mins)m")
+            let expected = (pace?[key] as? [String: Any])?["expectedUsedPercent"] as? Double
+                ?? evenPace(windowMinutes: mins, resetsAt: w["resetsAt"] as? String)
+            let scoped = scopedWindows.first {
+                ($0["window"] as? [String: Any])?["windowMinutes"] as? Int == mins
+            }
+            windows.append(CapacityWindow(
+                span: span, used: pct, expected: expected,
+                resets: w["resetDescription"] as? String,
+                resetsAt: w["resetsAt"] as? String,
+                scoped: (scoped?["window"] as? [String: Any])?["usedPercent"] as? Double,
+                // "Fable only" is the title; the tick's tooltip supplies its own "only".
+                scopedLabel: (scoped?["title"] as? String)?
+                    .replacingOccurrences(of: " only", with: "")))
+            parts.append(String(format: "%@ %.0f%%", span, pct))
+            if headline == nil { headline = pct }
+        }
+        guard !windows.isEmpty else { return nil }
+        return CapacityProvider(name: name, percentUsed: headline,
+                                label: parts.joined(separator: " "),
+                                windows: windows, note: nil)
     }
 
     /// Even-spend pace for a provider that doesn't publish one. codexbar computes a
