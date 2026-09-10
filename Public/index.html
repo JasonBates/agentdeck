@@ -1441,8 +1441,14 @@
                    '<span class="val">' + pct + '%</span>' +
                  '</span>';
         }).join('');
-        // The reset shown is the fullest window's: that is the one that will stop you.
-        var tightest = windows.reduce(function (best, w) {
+        // The reset shown is the weekly's. The 5h window rolls over inside a working
+        // day and its end is rarely the question; the weekly is the one to plan
+        // around, and showing whichever window was fullest made the label switch
+        // between the two without saying so. Only a provider with no weekly falls
+        // back to its fullest window.
+        var tightest = windows.filter(function (w) {
+          return w.span === 'wk' && w.resets;
+        })[0] || windows.reduce(function (best, w) {
           return (!best || w.used > best.used) && w.resets ? w : best;
         }, null);
         var reset = tightest ? resetLabel(tightest) : '';
