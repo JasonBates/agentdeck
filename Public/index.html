@@ -836,8 +836,12 @@
   /* 10.5-inch iPad landscape (1112 x 834): with the workspace bar in place, exactly two
      rows of three cards fill the grid instead of two and a slice of a third. Rows are a
      share of the grid's own height, so more than six agents still scroll. */
+  /* Nothing in a card may shrink to meet that height: Safari squashes a line-clamped
+     title (-webkit-box, overflow hidden) straight through its glyphs when a two-line
+     title and outcome overrun the row. A card with that much to say grows instead. */
   @media (min-width: 901px) and (max-width: 1180px) and (orientation: landscape) and (min-height: 501px) {
-    main { grid-auto-rows: calc((100% - 12px) / 2); }
+    main { grid-auto-rows: minmax(calc((100% - 12px) / 2), auto); }
+    .card > * { flex-shrink: 0; }
   }
   /* Portrait and split view: numbers and icons only, one row. */
   @media (max-width: 900px) {
