@@ -784,9 +784,11 @@
     gap: 12px; padding: 4px 18px 0;
   }
   .aero-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  /* The bracket spans the group edge to edge, so its ends drop straight down onto the
+     outer edges of the first and last tiles rather than landing inside them. */
   .aero-bracket {
-    height: 6px; margin: 0 4px; border: 1px solid var(--dim); border-bottom: none;
-    border-radius: 3px 3px 0 0;
+    height: 7px; margin: 0; border: 1px solid var(--dim); border-bottom: none;
+    border-radius: 6px 6px 0 0;
   }
   .aero-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .aero-tile {
