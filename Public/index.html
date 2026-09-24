@@ -1602,6 +1602,19 @@
   var aero = document.getElementById('aero');
   var aeroHTML = '';
 
+  // Short names for apps too long for a tile (about 69px of text). Anything not listed
+  // still truncates with an ellipsis; the tile's aria-label keeps the full name.
+  var AERO_ALIASES = {
+    'MindManager': 'MindMan',
+    'Camera Hub': 'CamHub',
+    'System Settings': 'Settings',
+    'Karabiner-Elements': 'Karabiner'
+  };
+
+  function aeroShort(name) {
+    return Object.prototype.hasOwnProperty.call(AERO_ALIASES, name) ? AERO_ALIASES[name] : name;
+  }
+
   function aeroInitial(name) {
     var m = String(name || '?').match(/[A-Za-z0-9]/);
     return m ? m[0].toUpperCase() : '?';
@@ -1625,7 +1638,7 @@
       h += '<span class="aero-app">' +
         '<img alt="" src="' + BASE + 'api/aerospace/icon/' + encodeURIComponent(a.bundleId) + '"' +
         ' data-ini="' + esc(aeroInitial(a.name)) + '">' +
-        '<span class="aero-name">' + esc(a.name) + (a.windows > 1 ? ' ×' + a.windows : '') + '</span></span>';
+        '<span class="aero-name">' + esc(aeroShort(a.name)) + (a.windows > 1 ? ' ×' + a.windows : '') + '</span></span>';
     });
     return h + '</span></button>';
   }
