@@ -88,7 +88,12 @@ let server = HTTPServer(port: port)
 server.snapshotJSON = { currentJSON() }
 server.isKnown = { kind, id in
     stateLock.lock(); defer { stateLock.unlock() }
-    return kind == "pane" ? knownPanes.contains(id) : knownWorkspaces.contains(id)
+    switch kind {
+    case "pane": return knownPanes.contains(id)
+    case "workspace": return knownWorkspaces.contains(id)
+    case "aerospace": return AeroSpace.isSwitchable(id)
+    default: return false
+    }
 }
 server.policy = OriginPolicy(port: port, publicHost: publicHost, allowedOrigins: allowedOrigins)
 
@@ -134,6 +139,13 @@ server.onCreateTab = { ws in
         FileHandle.standardError.write(Data("tab creation failed: \(error)\n".utf8))
         return false
     }
+}
+
+server.onAeroSpaceWorkspace = { name in
+    guard AeroSpace.switchTo(name) else { return false }
+    // Move the highlight now rather than waiting for the focused-workspace event.
+    aerospaceQueue.async { if AeroSpace.refresh() { requestTick() } }
+    return true
 }
 
 // Banner prints from the listener's ready state, never before it — see HTTPServer.
@@ -217,7 +229,7 @@ timer.resume()
 // Bursts are coalesced — one action emits pane_focused + workspace_focused +
 // tab_focused + pane_updated together, and they should cost a single tick.
 var tickPending = false
-events = HerdrEvents {
+func requestTick() {
     poller.async {
         guard !tickPending else { return }
         tickPending = true
@@ -227,7 +239,31 @@ events = HerdrEvents {
         }
     }
 }
+events = HerdrEvents { requestTick() }
 events?.start()
+
+// AeroSpace workspaces: re-read on every subscribe event (coalesced like Herdr's), and on
+// a slow backstop because AeroSpace has no window-closed or window-moved event. A tick is
+// only requested when the feed actually changed.
+let aerospaceQueue = DispatchQueue(label: "agentdeck.aerospace")
+var aerospacePending = false
+func refreshAeroSpace() {
+    aerospaceQueue.async {
+        guard !aerospacePending else { return }
+        aerospacePending = true
+        aerospaceQueue.asyncAfter(deadline: .now() + 0.03) {
+            aerospacePending = false
+            if AeroSpace.refresh() { requestTick() }
+        }
+    }
+}
+let aerospaceEvents = AeroSpaceEvents { refreshAeroSpace() }
+aerospaceEvents.start()
+let aerospaceInterval = Double(env["AGENTDECK_AEROSPACE_INTERVAL"] ?? "") ?? 5
+let aerospaceTimer = DispatchSource.makeTimerSource(queue: aerospaceQueue)
+aerospaceTimer.schedule(deadline: .now(), repeating: aerospaceInterval)
+aerospaceTimer.setEventHandler { if AeroSpace.refresh() { requestTick() } }
+aerospaceTimer.resume()
 
 // Machine stats on their own 5s timer: CPU percentages only exist as a delta between
 // two samples, so this needs a steady cadence independent of when ticks happen.

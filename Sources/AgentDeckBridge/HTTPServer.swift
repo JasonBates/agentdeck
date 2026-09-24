@@ -102,6 +102,7 @@ final class HTTPServer {
     var onFocus: ((String) -> Bool)?
     var onWorkspace: ((String) -> Bool)?
     var onCreateTab: ((String) -> Bool)?
+    var onAeroSpaceWorkspace: ((String) -> Bool)?
     /// Whether an id in a POST body names something in the last Herdr snapshot. Bodies
     /// used to go straight into `herdr` argv; the bridge already holds the snapshot, so
     /// anything it has not seen is refused before a subprocess is spawned.
@@ -256,6 +257,9 @@ final class HTTPServer {
 
     /// Everything that reads or changes state. The page itself is public: it holds no
     /// data of its own, and serving it lets the origin explanation reach the user.
+    /// App icons for the workspace bar, by bundle id: `/api/aerospace/icon/md.obsidian`.
+    static let iconPrefix = "/api/aerospace/icon/"
+
     static func isProtected(_ path: String) -> Bool {
         path == "/events" || path.hasPrefix("/events?") || path.hasPrefix("/api/")
     }
@@ -306,6 +310,21 @@ final class HTTPServer {
             }
             lastTabCreate = Date()
             act(conn, body: body, key: "workspaceId", kind: "workspace", handler: onCreateTab)
+
+        case ("POST", "/api/aerospace/workspace"):
+            act(conn, body: body, key: "workspace", kind: "aerospace", handler: onAeroSpaceWorkspace)
+
+        case ("GET", _) where path.hasPrefix(Self.iconPrefix):
+            let id = String(path.dropFirst(Self.iconPrefix.count))
+            actions.async { [weak self] in
+                guard let self else { return }
+                if let png = AeroSpace.icon(bundleId: id) {
+                    self.respond(conn, body: png, type: "image/png", cache: "max-age=86400")
+                } else {
+                    self.respond(conn, status: "404 Not Found", body: Data("no icon".utf8),
+                                 type: "text/plain")
+                }
+            }
 
         default:
             respond(conn, status: "404 Not Found", body: Data("not found".utf8), type: "text/plain")
@@ -388,12 +407,13 @@ final class HTTPServer {
         return d
     }
 
-    private func respond(_ conn: NWConnection, status: String = "200 OK", body: Data, type: String) {
+    private func respond(_ conn: NWConnection, status: String = "200 OK", body: Data, type: String,
+                         cache: String = "no-store") {
         let headers = """
         HTTP/1.1 \(status)\r
         Content-Type: \(type)\r
         Content-Length: \(body.count)\r
-        Cache-Control: no-store\r
+        Cache-Control: \(cache)\r
         \(Self.securityHeaders)\r
         Connection: close\r
         \r

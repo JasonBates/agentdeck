@@ -70,6 +70,7 @@
   body.stale .next-action,
   body.stale .new-tab-action,
   body.stale #grid,
+  body.stale #aero,
   body.stale .quota,
   body.stale .sys,
   body.stale #host { opacity: .7; }
@@ -771,6 +772,68 @@
     #host, #age { font-size: 9px; }
   }
   .empty { grid-column: 1 / -1; color: var(--dim); padding: 40px 0; text-align: center; }
+
+  /* ---- AeroSpace workspace bar ----
+     Nine workspaces, three per monitor, left to right. Each group sits over one card
+     column: the same side padding and gap as main, so the brackets line up with the
+     cards below. Focus uses its own periwinkle so it never reads as an agent state
+     (amber working, green idle, teal background work). */
+  .aero {
+    --aero-focus: #8ea2ff;
+    flex: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px; padding: 4px 18px 0;
+  }
+  .aero-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .aero-bracket {
+    height: 6px; margin: 0 4px; border: 1px solid var(--dim); border-bottom: none;
+    border-radius: 3px 3px 0 0;
+  }
+  .aero-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .aero-tile {
+    height: 114px; min-width: 0; padding: 8px 8px 6px; border-radius: 10px;
+    display: flex; flex-direction: column; gap: 2px; text-align: left;
+    background: var(--card); border: 1px solid var(--line); color: var(--muted);
+    font: inherit; cursor: pointer;
+  }
+  .aero-tile .aero-head { display: flex; align-items: center; justify-content: space-between; height: 20px; }
+  .aero-tile .aero-num { font: 600 16px/1 var(--mono); color: var(--muted); }
+  .aero-tile .aero-more {
+    font-size: 11px; font-weight: 600; color: var(--muted); padding: 1px 6px;
+    border-radius: 8px; background: var(--line);
+  }
+  .aero-app { height: 22px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .aero-app img, .aero-app .aero-ini {
+    flex: none; width: 20px; height: 20px; border-radius: 5px;
+  }
+  .aero-app .aero-ini {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: var(--text); background: #3d4556;
+  }
+  .aero-app .aero-name {
+    font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #a3aab6;
+  }
+  .aero-tile:not(.vis) .aero-app img, .aero-tile:not(.vis) .aero-ini { opacity: .7; }
+  .aero-tile.vis { background: var(--card-hi); border-color: var(--dim); }
+  .aero-tile.vis .aero-num, .aero-tile.vis .aero-name { color: var(--text); }
+  .aero-tile.foc { border: 2px solid var(--aero-focus); padding: 7px 7px 5px; }
+  .aero-tile.foc .aero-num { color: var(--aero-focus); }
+  .aero-tile.void:not(.vis) { background: transparent; border-style: dashed; }
+  .aero-tile.void:not(.vis) .aero-num { color: var(--dim); }
+  .aero-tile.flash { background: #2a2f39; }
+  .aero.unavail .aero-tile { cursor: default; }
+  .aero-note {
+    grid-column: 1 / -1; font-size: 12px; color: var(--muted); padding: 0 4px; margin-top: -2px;
+  }
+  /* Portrait and split view: numbers and icons only, one row. */
+  @media (max-width: 900px) {
+    .aero-tile { height: 72px; }
+    .aero-app .aero-name { display: none; }
+    .aero-apps { display: flex; gap: 4px; }
+  }
+  /* iPhone landscape is a four-card control surface with no vertical room. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    .aero { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -784,6 +847,8 @@
   <button type="button" class="new-tab-action" id="newTabAction" hidden
           aria-label="Create a new tab">+</button>
 </header>
+
+<nav class="aero" id="aero" aria-label="AeroSpace workspaces"></nav>
 
 <main id="grid"><div class="empty">connecting…</div></main>
 
@@ -1054,6 +1119,7 @@
 
   function render(d) {
     last = d;
+    renderAero(d.aerospace);
     // A live update every few seconds would otherwise rebuild the grid mid-drag and
     // throw away the card under your finger. Repaint happens when the drag ends.
     if (lifted) return;
@@ -1524,6 +1590,72 @@
       body: JSON.stringify(payload)
     }).catch(function () {});
   }
+
+
+  // ---- AeroSpace workspace bar ----
+  var aero = document.getElementById('aero');
+  var aeroHTML = '';
+
+  function aeroInitial(name) {
+    var m = String(name || '?').match(/[A-Za-z0-9]/);
+    return m ? m[0].toUpperCase() : '?';
+  }
+
+  function aeroTile(w, ok) {
+    var cls = 'aero-tile';
+    if (w.visible) cls += ' vis';
+    if (w.focused) cls += ' foc';
+    if (!w.apps.length) cls += ' void';
+    var extra = w.apps.length - 3;
+    var label = 'Workspace ' + w.name + (w.apps.length
+      ? ': ' + w.apps.map(function (a) { return a.name; }).join(', ') : ', empty');
+    var h = '<button type="button" class="' + cls + '" data-ws="' + esc(w.name) + '"' +
+      ' aria-label="' + esc(label) + '" aria-pressed="' + (w.focused ? 'true' : 'false') + '"' +
+      (ok ? '' : ' disabled') + '>' +
+      '<span class="aero-head"><span class="aero-num">' + esc(w.name) + '</span>' +
+      (extra > 0 ? '<span class="aero-more">+' + extra + '</span>' : '') + '</span>' +
+      '<span class="aero-apps">';
+    w.apps.slice(0, 3).forEach(function (a) {
+      h += '<span class="aero-app">' +
+        '<img alt="" src="' + BASE + 'api/aerospace/icon/' + encodeURIComponent(a.bundleId) + '"' +
+        ' data-ini="' + esc(aeroInitial(a.name)) + '">' +
+        '<span class="aero-name">' + esc(a.name) + (a.windows > 1 ? ' ×' + a.windows : '') + '</span></span>';
+    });
+    return h + '</span></button>';
+  }
+
+  function renderAero(f) {
+    if (!aero || !f || !f.monitors) return;
+    var h = '';
+    f.monitors.forEach(function (m) {
+      h += '<div class="aero-group"><div class="aero-bracket"></div><div class="aero-tiles">';
+      m.workspaces.forEach(function (w) { h += aeroTile(w, f.ok); });
+      h += '</div></div>';
+    });
+    if (!f.ok || f.reason) {
+      h += '<div class="aero-note">' + (f.ok ? '' : 'Workspaces unavailable — ') + esc(f.reason || '') + '</div>';
+    }
+    aero.classList.toggle('unavail', !f.ok);
+    if (h === aeroHTML) return;
+    aeroHTML = h;
+    aero.innerHTML = h;
+  }
+
+  // A missing icon becomes a lettered square rather than a broken image.
+  aero.addEventListener('error', function (ev) {
+    var img = ev.target;
+    if (img.tagName !== 'IMG') return;
+    var s = document.createElement('span');
+    s.className = 'aero-ini';
+    s.textContent = img.getAttribute('data-ini') || '?';
+    img.replaceWith(s);
+  }, true);
+
+  aero.addEventListener('click', function (ev) {
+    var tile = ev.target.closest('.aero-tile');
+    if (!tile || aero.classList.contains('unavail')) return;
+    act(tile, 'api/aerospace/workspace', { workspace: tile.getAttribute('data-ws') });
+  });
 
   var lastNextPane = null;
 

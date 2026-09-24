@@ -33,6 +33,9 @@ from Omarchy/Quickshell to macOS.
 - An accepted title also becomes the Herdr tab label, so the sidebar and the deck agree.
 - Machine load, memory, the local model's residency and latency, and optionally your
   Claude and Codex quota windows in the footer.
+- Optionally, an [AeroSpace](https://github.com/nikitabobko/AeroSpace) workspace bar
+  above the cards: nine workspaces in three bracketed groups of three, one per monitor,
+  each listing up to three apps with their icons. Tap one to switch to it on the Mac.
 
 Every feed degrades loudly: a dead source renders as "unavailable", never as a stale
 value that still looks live. The design behind all of this, including the traps found
@@ -53,6 +56,11 @@ dashboards do, because that is where the useful signal is.
 - **A heading log** at `~/.local/state/agentdeck/headings.jsonl`: every generated
   heading, accepted or rejected, with the pane and transcript path. It rolls at 20 MB.
   Delete it whenever you like.
+- **AeroSpace windows and workspaces**, only if AeroSpace is installed, through
+  `aerospace list-workspaces`, `aerospace list-windows` and `aerospace subscribe`: app
+  names, bundle ids and which workspace each window is on. App icons come from macOS.
+  `AGENTDECK_AEROSPACE_WORKSPACES` (default `1,…,9`) and `AGENTDECK_AEROSPACE_INTERVAL`
+  (backstop re-read, default 5 s) tune it.
 - **Claude and Codex quota**, only if you install CodexBar and grant Full Disk Access.
   CodexBar reads Safari's cookie jar and calls undocumented provider endpoints. The last
   good reading is cached at `~/.cache/agentdeck/capacity.json`.

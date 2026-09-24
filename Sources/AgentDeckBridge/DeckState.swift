@@ -21,6 +21,8 @@ struct DeckPayload: Encodable {
     var capacity: CapacityFeed
     var host: HostFeed
     var localModel: LocalModelSnapshot?
+    /// AeroSpace's nine workspaces for the bar above the cards. Cached off the tick.
+    var aerospace: AeroSpaceFeed
 }
 
 struct FeedStatus: Encodable {
@@ -392,7 +394,8 @@ enum Deck {
             agents: ordered,
             capacity: Capacity.read(),
             host: HostFeed.read(),
-            localModel: localModel?.read()
+            localModel: localModel?.read(),
+            aerospace: AeroSpace.read()
         )
     }
 
@@ -404,7 +407,8 @@ enum Deck {
             workspaces: [], agents: [],
             capacity: Capacity.read(),
             host: HostFeed.read(),
-            localModel: localModel?.read()
+            localModel: localModel?.read(),
+            aerospace: AeroSpace.read()
         )
     }
 }
