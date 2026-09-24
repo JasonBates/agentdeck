@@ -790,7 +790,7 @@
   }
   .aero-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .aero-tile {
-    height: 114px; min-width: 0; padding: 8px 8px 6px; border-radius: 10px;
+    height: 114px; min-width: 0; overflow: hidden; padding: 8px 8px 6px; border-radius: 10px;
     display: flex; flex-direction: column; gap: 2px; text-align: left;
     background: var(--card); border: 1px solid var(--line); color: var(--muted);
     font: inherit; cursor: pointer;
@@ -801,6 +801,9 @@
     font-size: 11px; font-weight: 600; color: var(--muted); padding: 1px 6px;
     border-radius: 8px; background: var(--line);
   }
+  /* Long names (MindManager, PowerPoint ×2) truncate inside the tile: the column and
+     each row must be allowed to shrink below their content, or the ellipsis never fires. */
+  .aero-apps { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
   .aero-app { height: 22px; display: flex; align-items: center; gap: 6px; min-width: 0; }
   .aero-app img, .aero-app .aero-ini {
     flex: none; width: 20px; height: 20px; border-radius: 5px;
@@ -810,6 +813,7 @@
     font-size: 11px; font-weight: 700; color: var(--text); background: #3d4556;
   }
   .aero-app .aero-name {
+    flex: 1 1 auto; min-width: 0;
     font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #a3aab6;
   }
   .aero-tile:not(.vis) .aero-app img, .aero-tile:not(.vis) .aero-ini { opacity: .7; }
@@ -828,7 +832,7 @@
   @media (max-width: 900px) {
     .aero-tile { height: 72px; }
     .aero-app .aero-name { display: none; }
-    .aero-apps { display: flex; gap: 4px; }
+    .aero-apps { flex-direction: row; gap: 4px; }
   }
   /* iPhone landscape is a four-card control surface with no vertical room. */
   @media (orientation: landscape) and (max-height: 500px) {
