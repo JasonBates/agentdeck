@@ -790,6 +790,9 @@
     height: 7px; margin: 0; border: 1px solid var(--dim); border-bottom: none;
     border-radius: 6px 6px 0 0;
   }
+  /* The lower bracket mirrors the upper one and closes the screen controls off from the
+     agent cards below. */
+  .aero-bracket.low { border-top: none; border-bottom: 1px solid var(--dim); border-radius: 0 0 6px 6px; }
   .aero-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .aero-tile {
     height: 114px; min-width: 0; overflow: hidden; padding: 8px 8px 6px; border-radius: 10px;
@@ -829,6 +832,12 @@
   .aero.unavail .aero-tile { cursor: default; }
   .aero-note {
     grid-column: 1 / -1; font-size: 12px; color: var(--muted); padding: 0 4px; margin-top: -2px;
+  }
+  /* 10.5-inch iPad landscape (1112 x 834): with the workspace bar in place, exactly two
+     rows of three cards fill the grid instead of two and a slice of a third. Rows are a
+     share of the grid's own height, so more than six agents still scroll. */
+  @media (min-width: 901px) and (max-width: 1180px) and (orientation: landscape) and (min-height: 501px) {
+    main { grid-auto-rows: calc((100% - 12px) / 2); }
   }
   /* Portrait and split view: numbers and icons only, one row. */
   @media (max-width: 900px) {
@@ -1649,7 +1658,7 @@
     f.monitors.forEach(function (m) {
       h += '<div class="aero-group"><div class="aero-bracket"></div><div class="aero-tiles">';
       m.workspaces.forEach(function (w) { h += aeroTile(w, f.ok); });
-      h += '</div></div>';
+      h += '</div><div class="aero-bracket low"></div></div>';
     });
     if (!f.ok || f.reason) {
       h += '<div class="aero-note">' + (f.ok ? '' : 'Workspaces unavailable — ') + esc(f.reason || '') + '</div>';
