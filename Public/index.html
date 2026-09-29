@@ -1728,7 +1728,7 @@
   // Tap a card → focus that agent. Herdr switches workspace on its own when the
   // target pane lives in another one, so this doubles as a cross-space jump.
   grid.addEventListener('click', function (e) {
-    if (suppressClick) { suppressClick = false; return; }   // that tap was a drag
+    if (Date.now() - droppedAt < DROP_CLICK_MS) return;   // that tap was a drag
     var card = e.target.closest ? e.target.closest('.card') : null;
     if (card) act(card, 'api/focus', { paneId: card.getAttribute('data-pane') });
   });
@@ -1738,7 +1738,23 @@
   // Long-press to pick up, which is the platform's own reorder gesture and leaves
   // both vertical scrolling and tap-to-focus alone.
   var HOLD_MS = 300, SLOP = 10;
-  var press = null, lifted = null, dropTarget = null, suppressClick = false;
+  var press = null, lifted = null, dropTarget = null, pointer = null;
+  // A drop is followed by a click only when the finger ended where it started — Safari
+  // sends none after a touch that moved. A flag waiting for that click therefore ate
+  // the next real tap after most drags, so only a click arriving straight after the
+  // drop is taken to be its tail.
+  var DROP_CLICK_MS = 400, droppedAt = 0;
+
+  // Once a card is lifted the finger belongs to the drag. touch-action is read when a
+  // touch begins, so the `dragging` class can't take back a gesture the browser has
+  // already given to the panel's scroller — and once the deck is taller than the panel
+  // there is a scroller, which cancelled the pointer on the first move and dropped the
+  // card where it was. Cancelling the touchmove itself is the one thing that still
+  // works. The listener is here from load because WebKit ignores preventDefault from
+  // a touchmove listener added after the touch began.
+  grid.addEventListener('touchmove', function (e) {
+    if (lifted && e.cancelable) e.preventDefault();
+  }, { passive: false });
 
   // A drop target is either another card (trade places) or an empty slot (move there).
   function cellAt(x, y) {
@@ -1802,6 +1818,59 @@
     dragRow = [];
   }
 
+  // Keep the lifted card under the finger and mark what it would land on. The card
+  // lives inside the scrolling panel, so the panel's travel since the lift is added
+  // back — otherwise a card carried across a scroll would slide away from the finger.
+  function track() {
+    lifted.style.transform = 'translate(' + (pointer.x - press.x) + 'px,' +
+      (pointer.y - press.y + grid.scrollTop - press.scrollTop) + 'px) scale(1.03)';
+    var over = cellAt(pointer.x, pointer.y);
+    if (over !== dropTarget) {
+      if (dropTarget) dropTarget.classList.remove('dropzone');
+      dropTarget = over;
+      if (dropTarget) dropTarget.classList.add('dropzone');
+    }
+  }
+
+  // A deck taller than the panel has cells out of sight, and the finger holding a card
+  // can't scroll to them. Holding the card near the top or bottom edge of the panel, or
+  // past it, scrolls the deck under it, faster the deeper in. Speed is per second
+  // rather than per frame so a 120Hz iPad doesn't scroll at twice the pace.
+  var EDGE = 64, EDGE_SPEED = 1000;
+  var autoScroll = 0, scrollClock = 0;
+
+  function edgeSpeed(y) {
+    var r = grid.getBoundingClientRect();
+    if (y < r.top + EDGE) return -EDGE_SPEED * Math.min(1, (r.top + EDGE - y) / EDGE);
+    if (y > r.bottom - EDGE) return EDGE_SPEED * Math.min(1, (y - r.bottom + EDGE) / EDGE);
+    return 0;
+  }
+
+  function stepScroll(now) {
+    autoScroll = 0;
+    var v = lifted ? edgeSpeed(pointer.y) : 0;
+    if (!v) { scrollClock = 0; return; }
+    if (scrollClock) {
+      // At least a pixel a frame: a fractional step can round back to where it was and
+      // leave the card parked at the edge.
+      var step = v * (now - scrollClock) / 1000;
+      step = step < 0 ? Math.min(-1, step) : Math.max(1, step);
+      grid.scrollTop = Math.max(0, Math.min(press.maxScroll, grid.scrollTop + step));
+    }
+    scrollClock = now;
+    autoScroll = requestAnimationFrame(stepScroll);
+  }
+
+  // Autoscroll and a mouse wheel both land here. The lifted card is translated to stay
+  // under the finger and a transform counts as overflow, so the end of the deck is
+  // fixed at the lift: scrolling on past it would carry the card down with it, and the
+  // card would stretch the deck to scroll into, for ever.
+  grid.addEventListener('scroll', function () {
+    if (!lifted) return;
+    if (grid.scrollTop > press.maxScroll) { grid.scrollTop = press.maxScroll; return; }
+    track();
+  });
+
   grid.addEventListener('pointerdown', function (e) {
     var card = e.target.closest ? e.target.closest('.card') : null;
     if (!card) return;
@@ -1809,9 +1878,15 @@
       card: card, x: e.clientX, y: e.clientY,
       timer: setTimeout(function () {
         lifted = card;
+        pointer = { x: press.x, y: press.y };
         card.classList.add('lifted');
         document.body.classList.add('dragging');
         openDragRow();
+        press.scrollTop = grid.scrollTop;
+        press.maxScroll = Math.max(0, grid.scrollHeight - grid.clientHeight);
+        // A mouse, unlike a finger, isn't held by the element it pressed. Capture it,
+        // or a card carried off the panel to autoscroll never hears the button let go.
+        try { grid.setPointerCapture(e.pointerId); } catch (err) {}
         if (navigator.vibrate) navigator.vibrate(8);
       }, HOLD_MS)
     };
@@ -1827,14 +1902,9 @@
     }
     if (!lifted) return;
     e.preventDefault();
-    lifted.style.transform =
-      'translate(' + (e.clientX - press.x) + 'px,' + (e.clientY - press.y) + 'px) scale(1.03)';
-    var over = cellAt(e.clientX, e.clientY);
-    if (over !== dropTarget) {
-      if (dropTarget) dropTarget.classList.remove('dropzone');
-      dropTarget = over;
-      if (dropTarget) dropTarget.classList.add('dropzone');
-    }
+    pointer = { x: e.clientX, y: e.clientY };
+    track();
+    if (!autoScroll) autoScroll = requestAnimationFrame(stepScroll);
   });
 
   function finishDrag() {
@@ -1849,11 +1919,13 @@
       }
       lifted.classList.remove('lifted');
       lifted.style.transform = '';
-      suppressClick = true;       // don't focus the agent we just dropped
+      droppedAt = Date.now();     // don't focus the agent we just dropped
     }
+    if (autoScroll) cancelAnimationFrame(autoScroll);
+    autoScroll = 0; scrollClock = 0;
     if (dropTarget) dropTarget.classList.remove('dropzone');
     document.body.classList.remove('dragging');
-    lifted = null; dropTarget = null;
+    lifted = null; dropTarget = null; pointer = null;
     closeDragRow();
     endPress();
     if (last) render(last);
