@@ -11,7 +11,15 @@
 var CACHE = 'agentdeck-page-v1';
 var TIMEOUT_MS = 4000;
 
-self.addEventListener('install', function () { self.skipWaiting(); });
+// Store the copy at install rather than waiting for a load to pass through: a kiosk opens
+// the deck once and keeps it open, so there may be no second load before the next boot.
+// A failed store doesn't fail the install; the next load that reaches the network fills it.
+self.addEventListener('install', function (e) {
+  self.skipWaiting();
+  e.waitUntil(caches.open(CACHE)
+    .then(function (c) { return c.add(self.registration.scope); })
+    .catch(function () {}));
+});
 self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim()); });
 
 self.addEventListener('fetch', function (e) {
