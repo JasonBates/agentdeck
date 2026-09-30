@@ -2043,6 +2043,12 @@
         '<code>' + esc(setting) + '</code><br>or pass it to Scripts/install.sh, then reload.</div>';
     }).catch(function () { originProbe = false; });
   }
+
+  // A kiosk iPad opens the deck as it boots, before the network is up. The worker keeps
+  // a copy of this page so that first load has something to show (Public/sw.js).
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register(BASE + 'sw.js').catch(function () {});
+  }
   connect();
 })();
 </script>

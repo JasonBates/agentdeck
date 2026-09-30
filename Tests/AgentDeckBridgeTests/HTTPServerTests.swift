@@ -34,4 +34,14 @@ final class HTTPServerTests: XCTestCase {
         XCTAssertFalse(HTTPServer.plausibleId("w1\nS"))
         XCTAssertFalse(HTTPServer.plausibleId(String(repeating: "p", count: 65)))
     }
+
+    /// The kiosk's offline copy is served from beside index.html, like the page it keeps,
+    /// and handles page loads only — the event stream must never pass through it.
+    func testServiceWorkerIsServedAndLeavesTheStreamAlone() {
+        let sw = String(decoding: Public.serviceWorker(), as: UTF8.self)
+        XCTAssertTrue(sw.contains("addEventListener('fetch'"))
+        XCTAssertTrue(sw.contains("e.request.mode !== 'navigate'"))
+        XCTAssertFalse(HTTPServer.isProtected("/sw.js"))
+        XCTAssertNil(Public.file("no-such-file.js"))
+    }
 }

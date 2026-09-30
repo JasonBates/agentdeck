@@ -286,6 +286,12 @@ final class HTTPServer {
         case ("GET", "/"), ("GET", "/index.html"):
             respond(conn, body: Public.index(), type: "text/html; charset=utf-8")
 
+        // The offline copy for a kiosk iPad. `no-cache` rather than `no-store`: the browser
+        // revalidates the worker on every page load, so an edited sw.js is picked up.
+        case ("GET", "/sw.js"):
+            respond(conn, body: Public.serviceWorker(), type: "text/javascript; charset=utf-8",
+                    cache: "no-cache")
+
         case ("GET", "/api/snapshot"):
             respond(conn, body: snapshotJSON?() ?? Data("{}".utf8), type: "application/json")
 
@@ -438,30 +444,41 @@ extension HTTPServer {
     ].joined(separator: "\r\n")
 }
 
-// MARK: - Static asset
+// MARK: - Static assets
 
 enum Public {
     /// Read from disk on every request so index.html can be edited and reloaded
     /// on the iPad without rebuilding the bridge.
     static func index() -> Data {
-        for candidate in searchPaths {
-            if let d = FileManager.default.contents(atPath: candidate) { return d }
-        }
-        return Data("<h1>Public/index.html not found</h1><p>Set AGENTDECK_PUBLIC.</p>".utf8)
+        file("index.html")
+            ?? Data("<h1>Public/index.html not found</h1><p>Set AGENTDECK_PUBLIC.</p>".utf8)
     }
 
-    private static var searchPaths: [String] {
-        var paths: [String] = []
+    /// Missing, it answers with a comment rather than a 404 so a registered worker is
+    /// replaced by one that does nothing, instead of lingering from an older install.
+    static func serviceWorker() -> Data {
+        file("sw.js") ?? Data("// Public/sw.js not found\n".utf8)
+    }
+
+    static func file(_ name: String) -> Data? {
+        for dir in searchDirs {
+            if let d = FileManager.default.contents(atPath: "\(dir)/\(name)") { return d }
+        }
+        return nil
+    }
+
+    private static var searchDirs: [String] {
+        var dirs: [String] = []
         if let env = ProcessInfo.processInfo.environment["AGENTDECK_PUBLIC"] {
-            paths.append("\(env)/index.html")
+            dirs.append(env)
         }
         // Package root, resolved from this source file's location at build time.
         let pkgRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // AgentDeckBridge
             .deletingLastPathComponent()   // Sources
             .deletingLastPathComponent()   // package root
-        paths.append(pkgRoot.appendingPathComponent("Public/index.html").path)
-        paths.append(FileManager.default.currentDirectoryPath + "/Public/index.html")
-        return paths
+        dirs.append(pkgRoot.appendingPathComponent("Public").path)
+        dirs.append(FileManager.default.currentDirectoryPath + "/Public")
+        return dirs
     }
 }
