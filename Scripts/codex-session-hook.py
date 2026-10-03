@@ -2,8 +2,9 @@
 """Report Codex's session to its real Herdr pane.
 
 Codex hooks can run in a shared app-server daemon whose HERDR_PANE_ID belongs to
-an old pane. Match the rollout's start time and cwd to a live Codex process
-instead of trusting the hook's inherited pane environment.
+an old pane. Match the current launch and cwd to a live Codex process instead
+of trusting the hook's inherited pane environment. A resumed rollout predates
+its current process, so its original creation time cannot identify that launch.
 """
 
 import datetime as dt
@@ -42,7 +43,7 @@ def started(pid):
         return None
 
 
-def candidates(cwd, rollout_start):
+def candidates(cwd, rollout_start, *, source="startup", hook_start=None):
     snapshot = herdr("api", "snapshot")
     if not snapshot:
         return []
@@ -60,17 +61,34 @@ def candidates(cwd, rollout_start):
                 continue
             process_start = started(process["pid"])
             if process_start:
-                delta = abs((process_start - rollout_start).total_seconds())
-                if delta <= 8:
+                if source == "resume":
+                    # SessionStart runs immediately after `resume --last`/UUID.
+                    # Use this invocation's fixed arrival time, never the old
+                    # rollout timestamp or a moving clock during retries. Leave
+                    # delayed picker selections and concurrent launches unlinked
+                    # rather than guess which terminal owns the transcript.
+                    if hook_start is None:
+                        continue
+                    delta = (hook_start - process_start).total_seconds()
+                    matches = 0 <= delta <= 30
+                else:
+                    delta = abs((process_start - rollout_start).total_seconds())
+                    matches = delta <= 8
+                if matches:
                     found.append((delta, pane))
+                    break  # A pane is a candidate once, even with multiple processes.
     return sorted(found)
 
 
 def main():
+    hook_start = dt.datetime.now()
     if os.environ.get("HERDR_ENV") != "1":
         return 0
     try:
         payload = json.load(sys.stdin)
+        source = payload.get("source", "startup")
+        if source not in ("startup", "resume"):
+            return 0
         session_id = payload["session_id"]
         path = Path(payload["transcript_path"])
         match = ROLLOUT.fullmatch(path.name)
@@ -86,13 +104,19 @@ def main():
         return 0
 
     for attempt in range(6):
-        matches = candidates(cwd, rollout_start)
+        try:
+            matches = candidates(cwd, rollout_start, source=source, hook_start=hook_start)
+        except (OSError, subprocess.TimeoutExpired, KeyError, TypeError):
+            matches = []
         if len(matches) == 1:
             pane = matches[0][1]
-            if herdr("pane", "report-agent-session", pane, "--source", "herdr:codex",
-                     "--agent", "codex", "--agent-session-id", session_id,
-                     "--seq", str(time.time_ns())):
-                return 0
+            try:
+                if herdr("pane", "report-agent-session", pane, "--source", "herdr:codex",
+                         "--agent", "codex", "--agent-session-id", session_id,
+                         "--seq", str(time.time_ns())):
+                    return 0
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         if attempt < 5:
             time.sleep(0.5)
     return 0  # Hooks must never interrupt Codex startup.

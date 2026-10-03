@@ -253,7 +253,7 @@ then drops the grant silently, so quota goes quietly stale until you re-grant it
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
-python3 -m unittest Tests/Installer/test_configure_herdr.py
+uv run python -m unittest discover -s Tests/Installer -v
 ```
 
 Pinning `DEVELOPER_DIR` keeps compiler and SDK from the same Xcode; the standalone
@@ -261,5 +261,14 @@ Command Line Tools can drift to a different Swift. Browser-visible changes are t
 with an on-demand preview that never touches the installed service; see
 [AGENTS.md](AGENTS.md). Heading-model evaluations and their results are under
 [`Evals/subtitle`](Evals/subtitle/README.md).
+
+`Scripts/codex-session-hook.py` recovers missing Codex session IDs when a shared
+app-server inherits an obsolete Herdr pane ID. When configured as a Codex
+`SessionStart` hook, it matches the rollout's cwd to a live Codex pane. Fresh
+sessions use the rollout creation time; resumed sessions use the hook arrival
+time and require a process launched within the preceding 30 seconds. Multiple
+matching panes or a longer delay in the resume picker leave the session unlinked,
+rather than attach another conversation's transcript. The hook script is used
+directly and does not require rebuilding or restarting the bridge.
 
 Security reports: see [SECURITY.md](SECURITY.md). Licence: [MIT](LICENSE).
