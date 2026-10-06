@@ -114,6 +114,9 @@ enum AeroSpace {
                 names = Set(feed.monitors.flatMap { $0.workspaces.map(\.name) })
                 lock.lock(); let note = eventsNote; lock.unlock()
                 feed.reason = note
+            } catch HerdrError.exec(let code, let err) {
+                // Shell.run's error is worded for Herdr; say which tool failed.
+                feed = unavailable(firstLine("aerospace exited \(code): \(err)"))
             } catch {
                 feed = unavailable(firstLine("\(error)"))
             }
