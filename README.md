@@ -59,8 +59,12 @@ dashboards do, because that is where the useful signal is.
 - **AeroSpace windows and workspaces**, only if AeroSpace is installed, through
   `aerospace list-workspaces`, `aerospace list-windows` and `aerospace subscribe`: app
   names, bundle ids and which workspace each window is on. App icons come from macOS.
-  `AGENTDECK_AEROSPACE_WORKSPACES` (default `1,…,9`) and `AGENTDECK_AEROSPACE_INTERVAL`
-  (backstop re-read, default 5 s) tune it.
+  Every subscribe event triggers a re-read. Builds whose `aerospace subscribe` has
+  `window-closed` and `window-moved` push window changes, so the backstop re-read is slow;
+  stock AeroSpace lacks them, so the bar falls back to polling window changes.
+  `AGENTDECK_AEROSPACE_WORKSPACES` (default `1,…,9`), `AGENTDECK_AEROSPACE_INTERVAL`
+  (backstop with window events, default 60 s) and `AGENTDECK_AEROSPACE_POLL` (without
+  them, default 5 s) tune it.
 - **Claude and Codex quota**, only if you install CodexBar and grant Full Disk Access.
   CodexBar reads Safari's cookie jar and calls undocumented provider endpoints. The last
   good reading is cached at `~/.cache/agentdeck/capacity.json`.

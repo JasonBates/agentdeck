@@ -89,8 +89,38 @@ final class AeroSpaceTests: XCTestCase {
         XCTAssertEqual(AeroSpaceEvents.eventName(line: Data(
             #"{"_event":"focused-workspace-changed","prevWorkspace":"2","workspace":"5"}"#.utf8)),
             "focused-workspace-changed")
+        XCTAssertEqual(AeroSpaceEvents.eventName(line: Data(
+            #"{"_event":"window-moved","appBundleId":"com.example.app","appName":"Example","prevWorkspace":"4","windowId":101,"workspace":"5"}"#.utf8)),
+            "window-moved")
         XCTAssertNil(AeroSpaceEvents.eventName(line: Data()))
         XCTAssertNil(AeroSpaceEvents.eventName(line: Data("not json".utf8)))
+    }
+
+    func testSubscribesToWindowEventsWithLegacyFallback() {
+        XCTAssertTrue(AeroSpaceEvents.events.contains("window-closed"))
+        XCTAssertTrue(AeroSpaceEvents.events.contains("window-moved"))
+        XCTAssertTrue(AeroSpaceEvents.events.contains("focus-changed"))
+        XCTAssertFalse(AeroSpaceEvents.legacyEvents.contains("window-closed"))
+        XCTAssertFalse(AeroSpaceEvents.legacyEvents.contains("window-moved"))
+        XCTAssertEqual(Set(AeroSpaceEvents.legacyEvents).subtracting(AeroSpaceEvents.events), [])
+    }
+
+    func testRecognisesAnOlderCLIRefusingWindowEvents() {
+        XCTAssertTrue(AeroSpaceEvents.rejectedEventName(stderr: """
+            ERROR: Can't parse 'window-closed'.
+                   Possible values: (focus-changed|focused-monitor-changed|window-detected)
+            """))
+        XCTAssertFalse(AeroSpaceEvents.rejectedEventName(stderr: "Can't connect to AeroSpace server"))
+        XCTAssertFalse(AeroSpaceEvents.rejectedEventName(stderr: ""))
+    }
+
+    func testBackstopSlowWhileWindowEventsArePushed() {
+        XCTAssertFalse(AeroSpace.backstopDue(sinceLast: 5, windowEventsLive: true, slow: 60, fast: 5))
+        XCTAssertFalse(AeroSpace.backstopDue(sinceLast: 30, windowEventsLive: true, slow: 60, fast: 5))
+        XCTAssertTrue(AeroSpace.backstopDue(sinceLast: 59.8, windowEventsLive: true, slow: 60, fast: 5))
+        XCTAssertTrue(AeroSpace.backstopDue(sinceLast: 4.9, windowEventsLive: false, slow: 60, fast: 5))
+        XCTAssertFalse(AeroSpace.backstopDue(sinceLast: 2, windowEventsLive: false, slow: 60, fast: 5))
+        XCTAssertTrue(AeroSpace.backstopDue(sinceLast: .infinity, windowEventsLive: true, slow: 60, fast: 5))
     }
 
     func testBundleIdValidation() {

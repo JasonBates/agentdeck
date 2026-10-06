@@ -144,7 +144,7 @@ server.onCreateTab = { ws in
 server.onAeroSpaceWorkspace = { name in
     guard AeroSpace.switchTo(name) else { return false }
     // Move the highlight now rather than waiting for the focused-workspace event.
-    aerospaceQueue.async { if AeroSpace.refresh() { requestTick() } }
+    aerospaceQueue.async { reReadAeroSpace() }
     return true
 }
 
@@ -242,27 +242,40 @@ func requestTick() {
 events = HerdrEvents { requestTick() }
 events?.start()
 
-// AeroSpace workspaces: re-read on every subscribe event (coalesced like Herdr's), and on
-// a slow backstop because AeroSpace has no window-closed or window-moved event. A tick is
-// only requested when the feed actually changed.
+// AeroSpace workspaces: re-read on every subscribe event (coalesced like Herdr's). Window
+// opens, moves and closes are pushed on builds that have those events, so the backstop
+// re-read is slow (60 s); without them, or while the subscription is down, it falls back to
+// every 5 s. A tick is only requested when the feed actually changed.
 let aerospaceQueue = DispatchQueue(label: "agentdeck.aerospace")
 var aerospacePending = false
+var aerospaceLastRefresh = Date.distantPast   // touched only on aerospaceQueue
+func reReadAeroSpace() {
+    aerospaceLastRefresh = Date()
+    if AeroSpace.refresh() { requestTick() }
+}
 func refreshAeroSpace() {
     aerospaceQueue.async {
         guard !aerospacePending else { return }
         aerospacePending = true
         aerospaceQueue.asyncAfter(deadline: .now() + 0.03) {
             aerospacePending = false
-            if AeroSpace.refresh() { requestTick() }
+            reReadAeroSpace()
         }
     }
 }
 let aerospaceEvents = AeroSpaceEvents { refreshAeroSpace() }
 aerospaceEvents.start()
-let aerospaceInterval = Double(env["AGENTDECK_AEROSPACE_INTERVAL"] ?? "") ?? 5
+let aerospaceInterval = Double(env["AGENTDECK_AEROSPACE_INTERVAL"] ?? "") ?? 60
+let aerospacePoll = Double(env["AGENTDECK_AEROSPACE_POLL"] ?? "") ?? 5
 let aerospaceTimer = DispatchSource.makeTimerSource(queue: aerospaceQueue)
-aerospaceTimer.schedule(deadline: .now(), repeating: aerospaceInterval)
-aerospaceTimer.setEventHandler { if AeroSpace.refresh() { requestTick() } }
+aerospaceTimer.schedule(deadline: .now(), repeating: min(aerospacePoll, aerospaceInterval))
+aerospaceTimer.setEventHandler {
+    if AeroSpace.backstopDue(sinceLast: Date().timeIntervalSince(aerospaceLastRefresh),
+                             windowEventsLive: AeroSpace.windowEventsLive,
+                             slow: aerospaceInterval, fast: aerospacePoll) {
+        reReadAeroSpace()
+    }
+}
 aerospaceTimer.resume()
 
 // Machine stats on their own 5s timer: CPU percentages only exist as a delta between

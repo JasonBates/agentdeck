@@ -8,9 +8,14 @@ import Foundation
 // the Herdr tick, on this feed's own queue) and cached; the tick reads the cache for free,
 // the way Capacity and HostFeed ride the payload.
 //
-// `aerospace subscribe` pushes focus and workspace changes. As with HerdrEvents they are a
-// trigger to re-read, never state to fold in. AeroSpace has no window-closed or
-// window-moved event, so a slow backstop timer catches those.
+// `aerospace subscribe` pushes focus and workspace changes, and on builds that have them
+// window-detected, window-closed and window-moved. As with HerdrEvents every event is a
+// trigger to re-read, never state to fold in, so the two list calls stay the one source of
+// truth. That also covers what the events miss: a native tab that replaces a window under
+// a new id, a minimised window, an accessory app's window becoming tracked, all of which
+// move focus and so fire focus-changed. A slow backstop re-read catches anything else; it
+// runs fast instead when the window events are unavailable (stock AeroSpace has no
+// window-closed or window-moved) or the subscription is down.
 //
 // Unlike Capacity this feed never carries a last-good reading: a window list that looks
 // live but isn't would send a tap to the wrong place. Unavailable keeps the nine-tile
@@ -61,6 +66,26 @@ enum AeroSpace {
     nonisolated(unsafe) private static var switchable = Set<String>()
     /// Set when the subscribe child is down but snapshots still work.
     nonisolated(unsafe) static var eventsNote: String?
+    /// True while a subscription that includes window-closed and window-moved is live, so
+    /// the backstop can slow down.
+    nonisolated(unsafe) private static var windowEvents = false
+
+    static var windowEventsLive: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return windowEvents
+    }
+
+    static func setWindowEventsLive(_ live: Bool) {
+        lock.lock(); windowEvents = live; lock.unlock()
+    }
+
+    /// Whether the backstop should re-read now: `fast` seconds after the last re-read while
+    /// window changes would otherwise go unseen, `slow` while window events are pushed.
+    static func backstopDue(sinceLast elapsed: TimeInterval, windowEventsLive: Bool,
+                            slow: TimeInterval, fast: TimeInterval) -> Bool {
+        // Half a second of slack so a timer firing marginally early still counts.
+        elapsed >= (windowEventsLive ? slow : fast) - 0.5
+    }
 
     static func read() -> AeroSpaceFeed {
         lock.lock(); defer { lock.unlock() }
@@ -242,8 +267,12 @@ final class AeroSpaceEvents {
     private var proc: Process?
     private var stopped = false
 
-    static let events = ["focus-changed", "focused-monitor-changed",
-                         "focused-workspace-changed", "window-detected"]
+    /// Everything the bar renders. window-closed and window-moved exist only on newer
+    /// builds; an older CLI refuses the whole subscription, so `legacyEvents` is the fallback.
+    static let events = ["focus-changed", "focused-monitor-changed", "focused-workspace-changed",
+                         "window-detected", "window-closed", "window-moved"]
+    static let legacyEvents = ["focus-changed", "focused-monitor-changed",
+                               "focused-workspace-changed", "window-detected"]
 
     init(onChange: @escaping () -> Void) { self.onChange = onChange }
 
@@ -264,11 +293,23 @@ final class AeroSpaceEvents {
         return obj["_event"] as? String
     }
 
+    /// True when the CLI rejected an event name, e.g.
+    /// `ERROR: Can't parse 'window-closed'.` from a build without window events.
+    static func rejectedEventName(stderr: String) -> Bool {
+        stderr.contains("Can't parse '")
+    }
+
     private func runLoop() {
         var backoff: UInt32 = 1
         while !stopped {
             let started = Date()
-            let status = runOnce()
+            // Try the window events on every connect: `aerospace-switch` can swap the build
+            // underneath us in either direction.
+            var (status, rejected) = runOnce(Self.events, windowEvents: true)
+            if rejected && !stopped {
+                (status, _) = runOnce(Self.legacyEvents, windowEvents: false)
+            }
+            AeroSpace.setWindowEventsLive(false)
             if stopped { break }
             // A session that lasted a while was healthy; reconnect promptly.
             if Date().timeIntervalSince(started) > 30 { backoff = 1 }
@@ -279,16 +320,17 @@ final class AeroSpaceEvents {
         }
     }
 
-    /// Runs one subscribe child until it exits; returns a short description of why.
-    private func runOnce() -> String {
-        guard let bin = AeroSpace.binary else { return "not installed" }
+    /// Runs one subscribe child until it exits; returns a short description of why, and
+    /// whether the CLI refused an event name before sending anything.
+    private func runOnce(_ events: [String], windowEvents: Bool) -> (String, rejected: Bool) {
+        guard let bin = AeroSpace.binary else { return ("not installed", false) }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bin)
-        p.arguments = ["subscribe"] + Self.events
+        p.arguments = ["subscribe"] + events
         let out = Pipe(), err = Pipe()
         p.standardOutput = out
         p.standardError = err
-        do { try p.run() } catch { return "\(error)" }
+        do { try p.run() } catch { return ("\(error)", false) }
         proc = p
         defer { proc = nil }
 
@@ -306,6 +348,7 @@ final class AeroSpaceEvents {
                     if !live {
                         live = true
                         AeroSpace.setEventsNote(nil)
+                        AeroSpace.setWindowEventsLive(windowEvents)
                     }
                     onChange()
                 }
@@ -315,6 +358,7 @@ final class AeroSpaceEvents {
         p.waitUntilExit()
         let errText = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let first = errText.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        return "exited \(p.terminationStatus)" + (first.isEmpty ? "" : ": \(first.prefix(120))")
+        return ("exited \(p.terminationStatus)" + (first.isEmpty ? "" : ": \(first.prefix(120))"),
+                !live && Self.rejectedEventName(stderr: errText))
     }
 }
