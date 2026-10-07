@@ -16,7 +16,7 @@ the Corral port through Tailscale as `/test1`, `/test2`, and so on. Press Ctrl-C
 testing is finished; that stops the worktree bridge and removes only its Tailscale route.
 Do not install a watcher or an always-running preview service.
 
-The heading model is `AGENTDECK_MODEL`, default `gemma4:12b` (`main.swift:64`), and it
+The heading model is `AGENTDECK_MODEL`, default `gemma4:12b` (`Sources/AgentDeckBridge/main.swift`), and it
 drives titles, subtitles and state summaries alike. Before changing it, read
 `Evals/subtitle/MODEL-SWITCH.md` — it measures `qwen3.8:27b` against the shipped
 setup and says what to change and, more usefully, what not to.
