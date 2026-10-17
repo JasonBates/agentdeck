@@ -1385,14 +1385,20 @@
     var modelHTML = '';
     if (m) {
       var modelCalls = modelSparkHTML(m.calls || [], compactRail);
-      var memory = m.residentGB == null ? '—' : m.residentGB.toFixed(1) + 'G';
+      // A leading ~ marks the figure the bridge had to reconstruct: Ollama 0.40 reports
+      // only its own buffers in /api/ps and leaves out the memory-mapped weights.
+      var memory = m.residentGB == null ? '—'
+        : (m.residentEstimated ? '~' : '') + m.residentGB.toFixed(1) + 'G';
+      var memoryTitle = m.residentEstimated
+        ? ' title="Estimated: model size on disk plus the cache and buffers Ollama reports"'
+        : '';
       var context = m.context ? Math.round(m.context / 1000) + 'k' : '—';
       modelHTML =
         '<div class="block local-model">' +
           '<div class="head">Local: <span class="n">' + esc(m.name) + '</span>' +
             '<i class="model-dot ' + esc(m.status) + '" title="' +
               esc(m.status) + '"></i></div>' +
-          '<div class="model-meta">Mem: ' + memory +
+          '<div class="model-meta"><span' + memoryTitle + '>Mem: ' + memory + '</span>' +
             '<span class="sep"></span>Context: ' + context + '</div>' +
           '<div class="model-spark" id="modelSpark">' + modelCalls + '</div>' +
         '</div>';
