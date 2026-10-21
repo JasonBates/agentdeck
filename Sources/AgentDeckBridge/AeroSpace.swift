@@ -22,6 +22,8 @@ import Foundation
 // shape with every workspace empty and says why.
 
 struct AeroSpaceFeed: Encodable, Equatable {
+    /// Laptop event ordering; absent on the local feed.
+    var revision: UInt64? = nil
     var ok: Bool
     var reason: String?
     var focused: String?

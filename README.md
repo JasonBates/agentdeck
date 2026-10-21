@@ -276,3 +276,22 @@ rather than attach another conversation's transcript. The hook script is used
 directly and does not require rebuilding or restarting the bridge.
 
 Security reports: see [SECURITY.md](SECURITY.md). Licence: [MIT](LICENSE).
+
+### Laptop workspace view
+
+The standard installation also serves `/deck2/`. It shows the same Studio agents and
+metrics, with a **Laptop** AeroSpace row. The bridge reads and switches workspaces
+through `ssh laptop`; configure that alias and key-based SSH access on the bridge's
+host. AeroSpace must be running in the laptop's logged-in session. AgentDeck itself
+stays on the Studio; nothing is installed on the laptop.
+
+For a preview or a custom public path, append `?aerospace=laptop` to the page URL.
+The laptop row uses an AeroSpace event subscription over a persistent SSH connection
+and pushes updates through the browser’s existing live stream. Focus events move
+the highlight immediately, independently of the slower window-list refresh; event
+revisions prevent older snapshots from rolling it back. Clicks reuse that
+connection; commands run independently of background snapshot reads, and bursts of
+events schedule at most one trailing read. A five-second browser check recovers missed updates. Failed
+reads clear its workspace contents; failed switches show an error and never control
+the Studio instead. App icons use the Studio's installed apps, with letter fallbacks.
+The normal `/deck/` view continues to control the Studio.

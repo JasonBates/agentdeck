@@ -103,6 +103,8 @@ final class HTTPServer {
     var onWorkspace: ((String) -> Bool)?
     var onCreateTab: ((String) -> Bool)?
     var onAeroSpaceWorkspace: ((String) -> Bool)?
+    var laptopAeroSpace: RemoteAeroSpace?
+    private let laptopActions = DispatchQueue(label: "agentdeck.laptop.actions")
     /// Whether an id in a POST body names something in the last Herdr snapshot. Bodies
     /// used to go straight into `herdr` argv; the bridge already holds the snapshot, so
     /// anything it has not seen is refused before a subprocess is spawned.
@@ -164,6 +166,27 @@ final class HTTPServer {
             guard payload != self.lastPayload else { return }
             self.lastPayload = payload
             self.send(event: payload)
+        }
+    }
+
+    func broadcastLaptopFocus(_ workspace: String, revision: UInt64) {
+        guard let data = try? JSONSerialization.data(withJSONObject:
+            ["workspace": workspace, "revision": revision]) else { return }
+        queue.async {
+            var frame = Data("event: laptop-aerospace-focus\ndata: ".utf8)
+            frame.append(data)
+            frame.append(Data("\n\n".utf8))
+            for (_, client) in self.sseClients { self.push(frame, to: client) }
+        }
+    }
+
+    func broadcastLaptop(_ feed: AeroSpaceFeed) {
+        guard let data = try? JSONEncoder().encode(feed) else { return }
+        queue.async {
+            var frame = Data("event: laptop-aerospace\ndata: ".utf8)
+            frame.append(data)
+            frame.append(Data("\n\n".utf8))
+            for (_, client) in self.sseClients { self.push(frame, to: client) }
         }
     }
 
@@ -271,7 +294,7 @@ final class HTTPServer {
         let parts = requestLine.split(separator: " ")
         guard parts.count >= 2 else { return drop(conn) }
         let method = String(parts[0])
-        let path = String(parts[1])
+        let path = String(parts[1].split(separator: "?", maxSplits: 1)[0])
 
         if Self.isProtected(path),
            !policy.allows(host: Self.header("host", in: head),
@@ -317,6 +340,21 @@ final class HTTPServer {
             lastTabCreate = Date()
             act(conn, body: body, key: "workspaceId", kind: "workspace", handler: onCreateTab)
 
+        case ("GET", "/api/aerospace/laptop"):
+            guard let laptopAeroSpace else {
+                respond(conn, status: "503 Service Unavailable", body: Data(), type: "application/json")
+                return
+            }
+            laptopAeroSpace.read { [weak self] feed in
+                self?.respond(conn, body: (try? JSONEncoder().encode(feed)) ?? Data(),
+                              type: "application/json")
+            }
+
+        case ("POST", "/api/aerospace/laptop/workspace"):
+            act(conn, body: body, key: "workspace", kind: "aerospace-laptop",
+                handler: laptopAeroSpace.map { laptop in { laptop.switchTo($0) } },
+                actionQueue: laptopActions)
+
         case ("POST", "/api/aerospace/workspace"):
             act(conn, body: body, key: "workspace", kind: "aerospace", handler: onAeroSpaceWorkspace)
 
@@ -340,7 +378,7 @@ final class HTTPServer {
     /// One shape for every action: a JSON body with one id, checked against the last
     /// snapshot, handed to `herdr` off the serving queue.
     private func act(_ conn: NWConnection, body: Data, key: String, kind: String,
-                     handler: ((String) -> Bool)?) {
+                     handler: ((String) -> Bool)?, actionQueue: DispatchQueue? = nil) {
         let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
         guard let id = obj?[key] as? String, Self.plausibleId(id),
               isKnown?(kind, id) ?? true, let handler else {
@@ -349,7 +387,7 @@ final class HTTPServer {
                     type: "application/json")
             return
         }
-        actions.async { [weak self] in
+        (actionQueue ?? actions).async { [weak self] in
             guard let self else { return }
             if handler(id) {
                 self.respond(conn, body: Data(#"{"ok":true}"#.utf8), type: "application/json")

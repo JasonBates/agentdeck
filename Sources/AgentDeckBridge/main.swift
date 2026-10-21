@@ -85,6 +85,11 @@ let summariser: Summariser? = modelName == "off"
                  modelMonitor: modelMonitor)
 
 let server = HTTPServer(port: port)
+server.laptopAeroSpace = RemoteAeroSpace()
+server.laptopAeroSpace?.onChange = { [weak server] feed in server?.broadcastLaptop(feed) }
+server.laptopAeroSpace?.onFocus = { [weak server] workspace, revision in
+    server?.broadcastLaptopFocus(workspace, revision: revision)
+}
 server.snapshotJSON = { currentJSON() }
 server.isKnown = { kind, id in
     stateLock.lock(); defer { stateLock.unlock() }
@@ -92,6 +97,7 @@ server.isKnown = { kind, id in
     case "pane": return knownPanes.contains(id)
     case "workspace": return knownWorkspaces.contains(id)
     case "aerospace": return AeroSpace.isSwitchable(id)
+    case "aerospace-laptop": return AeroSpace.shown.contains(id)
     default: return false
     }
 }
@@ -309,4 +315,16 @@ beat.schedule(deadline: .now() + 5, repeating: 5)
 beat.setEventHandler { server.republish() }
 beat.resume()
 
+// Close the persistent laptop SSH channel when a preview or installed bridge stops.
+signal(SIGTERM, SIG_IGN)
+signal(SIGINT, SIG_IGN)
+let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+let interruption = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+for source in [termination, interruption] {
+    source.setEventHandler {
+        server.laptopAeroSpace?.stop()
+        exit(0)
+    }
+    source.resume()
+}
 dispatchMain()

@@ -894,6 +894,9 @@
     return p + '/';
   })();
 
+  var laptopAero = new URLSearchParams(location.search).get('aerospace') === 'laptop'
+    || /^\/deck2(?:\/|$)/.test(location.pathname);
+
   var grid = document.getElementById('grid');
   var pills = document.getElementById('pills');
   var nextAction = document.getElementById('nextAction');
@@ -1138,7 +1141,7 @@
 
   function render(d) {
     last = d;
-    renderAero(d.aerospace);
+    if (!laptopAero) renderAero(d.aerospace);
     // A live update every few seconds would otherwise rebuild the grid mid-drag and
     // throw away the card under your finger. Repaint happens when the drag ends.
     if (lifted) return;
@@ -1620,6 +1623,7 @@
   // ---- AeroSpace workspace bar ----
   var aero = document.getElementById('aero');
   var aeroHTML = '';
+  var laptopFocusRevision = -1;
 
   // Short names for apps too long for a tile (about 69px of text). Anything not listed
   // still truncates with an ellipsis; the tile's aria-label keeps the full name.
@@ -1664,7 +1668,11 @@
 
   function renderAero(f) {
     if (!aero || !f || !f.monitors) return;
-    var h = '';
+    if (laptopAero && typeof f.revision === 'number') {
+      if (f.revision < laptopFocusRevision) return;
+      laptopFocusRevision = f.revision;
+    }
+    var h = laptopAero ? '<div class="aero-note">Laptop</div>' : '';
     f.monitors.forEach(function (m) {
       h += '<div class="aero-group"><div class="aero-bracket"></div><div class="aero-tiles">';
       m.workspaces.forEach(function (w) { h += aeroTile(w, f.ok); });
@@ -1692,8 +1700,49 @@
   aero.addEventListener('click', function (ev) {
     var tile = ev.target.closest('.aero-tile');
     if (!tile || aero.classList.contains('unavail')) return;
-    act(tile, 'api/aerospace/workspace', { workspace: tile.getAttribute('data-ws') });
+    if (!laptopAero) {
+      act(tile, 'api/aerospace/workspace', { workspace: tile.getAttribute('data-ws') });
+      return;
+    }
+    tile.disabled = true;
+    fetch(BASE + 'api/aerospace/laptop/workspace', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace: tile.getAttribute('data-ws') })
+    }).then(function (r) {
+      if (!r.ok) throw new Error('Laptop workspace switch failed');
+      // The event stream delivers the confirmed focus and window list.
+    }).catch(function () { laptopAeroUnavailable('Laptop workspace switch failed'); })
+      .finally(function () { tile.disabled = false; });
   });
+
+  var laptopAeroBusy = false;
+  var laptopAeroVersion = 0;
+  var laptopAeroTimer;
+  function laptopAeroUnavailable(reason) {
+    renderAero({ ok: false, reason: reason, monitors: [] });
+  }
+  function pollLaptopAero() {
+    clearTimeout(laptopAeroTimer);
+    if (laptopAeroBusy) return;
+    laptopAeroBusy = true;
+    var version = laptopAeroVersion;
+    var controller = new AbortController();
+    var deadline = setTimeout(function () { controller.abort(); }, 10000);
+    fetch(BASE + 'api/aerospace/laptop', { signal: controller.signal, cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('unavailable'); return r.json(); })
+      .then(function (feed) { if (version === laptopAeroVersion) renderAero(feed); })
+      .catch(function () { if (version === laptopAeroVersion) laptopAeroUnavailable('Laptop connection unavailable'); })
+      .finally(function () {
+        clearTimeout(deadline);
+        laptopAeroBusy = false;
+        laptopAeroTimer = setTimeout(pollLaptopAero, 5000);
+      });
+  }
+  if (laptopAero) {
+    aero.setAttribute('aria-label', 'Laptop AeroSpace workspaces');
+    laptopAeroUnavailable('Connecting to laptop…');
+    pollLaptopAero();
+  }
 
   var lastNextPane = null;
 
@@ -2000,12 +2049,44 @@
   function connect() {
     if (es) { try { es.close(); } catch (e) {} }
     es = new EventSource(BASE + 'events');
+    if (laptopAero) {
+      es.addEventListener('laptop-aerospace-focus', function (ev) {
+        try {
+          var focus = JSON.parse(ev.data);
+          if (focus.revision < laptopFocusRevision) return;
+          laptopFocusRevision = focus.revision;
+          laptopAeroVersion++;
+          if (aero.classList.contains('unavail')) return;
+          aero.querySelectorAll('.aero-tile').forEach(function (tile) {
+            var focused = tile.getAttribute('data-ws') === focus.workspace;
+            tile.classList.toggle('foc', focused);
+            if (focused) tile.classList.add('vis');
+            tile.setAttribute('aria-pressed', focused ? 'true' : 'false');
+          });
+          // Full snapshots must reconcile the DOM even if their HTML matches the
+          // last snapshot rendered before this direct focus update.
+          aeroHTML = '';
+        } catch (err) {}
+      });
+      es.addEventListener('laptop-aerospace', function (ev) {
+        try {
+          var feed = JSON.parse(ev.data);
+          laptopAeroVersion++;
+          renderAero(feed);
+        } catch (err) {}
+      });
+      es.onopen = function () { laptopFocusRevision = -1; pollLaptopAero(); };
+    }
     es.onmessage = function (ev) {
       lastMsg = Date.now();
       try { render(JSON.parse(ev.data)); } catch (err) {}
       tick();
     };
-    es.onerror = function () { live.classList.add('off'); explainRejectedOrigin(); };
+    es.onerror = function () {
+      live.classList.add('off');
+      if (laptopAero) laptopAeroUnavailable('Live connection interrupted; reconnecting…');
+      explainRejectedOrigin();
+    };
   }
 
   var lastReconnect = 0;

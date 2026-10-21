@@ -128,6 +128,9 @@ if [[ "$MODE" == uninstall ]]; then
         elif command -v tailscale >/dev/null 2>&1; then
             echo "==> removing Tailscale routes"
             tailscale serve --set-path="$PUBLIC_PATH" off >/dev/null 2>&1 || true
+            if [[ "$PUBLIC_PATH" == /deck ]]; then
+                tailscale serve --set-path=/deck2 off >/dev/null 2>&1 || true
+            fi
             tailscale serve --https="$PUBLIC_PORT" off >/dev/null 2>&1 || true
         fi
     fi
@@ -284,6 +287,9 @@ if managed_mode_enabled "$TAILSCALE_MODE"; then
     echo "==> publishing through Tailscale Serve"
     tailscale serve --bg --https="$PUBLIC_PORT" "http://127.0.0.1:$BRIDGE_PORT" >/dev/null
     tailscale serve --bg --set-path="$PUBLIC_PATH" "http://127.0.0.1:$BRIDGE_PORT" >/dev/null
+    if [[ "$PUBLIC_PATH" == /deck ]]; then
+        tailscale serve --bg --set-path=/deck2 "http://127.0.0.1:$BRIDGE_PORT" >/dev/null
+    fi
 fi
 
 echo
