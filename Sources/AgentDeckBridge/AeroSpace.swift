@@ -310,9 +310,11 @@ final class AeroSpaceEvents {
             let started = Date()
             // Try the window events on every connect: `aerospace-switch` can swap the build
             // underneath us in either direction.
-            var (status, rejected) = runOnce(Self.events, windowEvents: true)
+            // This block never returns, so give each connection its own autorelease pool;
+            // otherwise every reconnect leaks the pipes' read ends.
+            var (status, rejected) = autoreleasepool { runOnce(Self.events, windowEvents: true) }
             if rejected && !stopped {
-                (status, _) = runOnce(Self.legacyEvents, windowEvents: false)
+                (status, _) = autoreleasepool { runOnce(Self.legacyEvents, windowEvents: false) }
             }
             AeroSpace.setWindowEventsLive(false)
             if stopped { break }
@@ -339,11 +341,12 @@ final class AeroSpaceEvents {
         proc = p
         defer { proc = nil }
 
-        let handle = out.fileHandleForReading
+        let handle = out.fileHandleForReading, errHandle = err.fileHandleForReading
+        defer { try? handle.close(); try? errHandle.close() }
         var buffer = Data()
         var live = false
         while true {
-            let chunk = handle.availableData
+            let chunk = autoreleasepool { handle.availableData }
             if chunk.isEmpty { break }
             buffer.append(chunk)
             while let nl = buffer.firstIndex(of: 0x0A) {
@@ -361,7 +364,7 @@ final class AeroSpaceEvents {
             if buffer.count > 1024 * 1024 { buffer.removeAll() }
         }
         p.waitUntilExit()
-        let errText = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let errText = String(data: errHandle.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let first = errText.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         return ("exited \(p.terminationStatus)" + (first.isEmpty ? "" : ": \(first.prefix(120))"),
                 !live && Self.rejectedEventName(stderr: errText))

@@ -116,30 +116,39 @@ final class RemoteAeroSpace {
             let output = Pipe()
             process.standardOutput = output
             process.standardError = FileHandle.nullDevice
-            do {
-                processLock.lock()
-                if stopped { processLock.unlock(); return }
-                do { try process.run() } catch { processLock.unlock(); throw error }
-                eventProcess = process
-                processLock.unlock()
-                receivedEvent() // refresh after reconnect even before the next event
-                var buffer = Data()
-                while true {
-                    let chunk = output.fileHandleForReading.availableData
-                    if chunk.isEmpty { break }
-                    buffer.append(chunk)
-                    while let nl = buffer.firstIndex(of: 0x0A) {
-                        let line = Data(buffer[..<nl])
-                        buffer.removeSubrange(...nl)
-                        if AeroSpaceEvents.eventName(line: line) != nil {
-                            failures = 0
-                            receivedEvent(line: line)
+            // This loop runs inside one dispatch block that never returns, so its
+            // autorelease pool never drains. Without a pool per connection and an
+            // explicit close, each reconnect leaked the pipe's read end; a night of a
+            // sleeping laptop exhausted the bridge's descriptors and stopped herdr reads.
+            // A `return` here leaves only the pool; the stopped check below then returns.
+            autoreleasepool {
+                let reader = output.fileHandleForReading
+                defer { try? reader.close() }
+                do {
+                    processLock.lock()
+                    if stopped { processLock.unlock(); return }
+                    do { try process.run() } catch { processLock.unlock(); throw error }
+                    eventProcess = process
+                    processLock.unlock()
+                    receivedEvent() // refresh after reconnect even before the next event
+                    var buffer = Data()
+                    while true {
+                        let chunk = autoreleasepool { reader.availableData }
+                        if chunk.isEmpty { break }
+                        buffer.append(chunk)
+                        while let nl = buffer.firstIndex(of: 0x0A) {
+                            let line = Data(buffer[..<nl])
+                            buffer.removeSubrange(...nl)
+                            if AeroSpaceEvents.eventName(line: line) != nil {
+                                failures = 0
+                                receivedEvent(line: line)
+                            }
                         }
+                        if buffer.count > 1024 * 1024 { buffer.removeAll() }
                     }
-                    if buffer.count > 1024 * 1024 { buffer.removeAll() }
-                }
-                process.waitUntilExit()
-            } catch {}
+                    process.waitUntilExit()
+                } catch {}
+            }
             processLock.lock()
             eventProcess = nil
             let didStop = stopped
