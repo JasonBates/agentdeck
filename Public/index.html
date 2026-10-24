@@ -305,6 +305,18 @@
   }
   /* Dropping onto another card trades places with it. */
   .card.dropzone { outline: 2px dashed #6f7a8c; outline-offset: -4px; }
+  /* A phone or claude.ai thread behind `claude remote-control`: a faint wifi mark in
+     --muted grey, centred behind the prose. Only background-image and its placement are
+     set, never the `background` shorthand, so the working, unread and blocked washes
+     above keep their colour; and both pseudo-elements are already spoken for (the
+     sweep, the corner dot), so the mark can't live on one of those. A data URI can't
+     read a CSS variable, which is why the grey is spelled out. */
+  .card.remote {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 4 64 46'%3E%3Cg fill='none' stroke='%23868e9c' stroke-opacity='.1' stroke-width='4' stroke-linecap='round'%3E%3Cpath d='M23.5 35.5a12 12 0 0 1 17 0'/%3E%3Cpath d='M15 27a24 24 0 0 1 34 0'/%3E%3Cpath d='M6.5 18.5a36 36 0 0 1 51 0'/%3E%3C/g%3E%3Ccircle cx='32' cy='44' r='4' fill='%23868e9c' fill-opacity='.1'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: auto 46%;
+  }
   /* An empty slot. The deck is a board you arrange rather than a queue, so a gap you
      leave stays a gap — and it only draws itself while you're holding a card, because
      the rest of the time the empty space is the point. */
@@ -854,6 +866,47 @@
     .aero { display: none; }
   }
 </style>
+<script>
+// Pick up an edited index.html without anyone reloading by hand. The deck runs in a
+// chromeless browser and a kiosk iPad, neither of which has a reload button, and the
+// bridge reads this file from disk on every request, so a page edit is live the moment
+// it is saved — it just never reached a page that was already open. The page is fetched
+// again now and then and compared with the copy seen at startup; a difference reloads it.
+// The worker is network-first, so the reload gets the new file. Never mid-drag, and a
+// failed fetch (bridge down, network away) is simply skipped.
+//
+// Its own script, in the head, on purpose. Every open screen reloads into whatever was
+// saved, broken or not, and a watcher inside the deck's main script would die with a
+// mistake anywhere in it — leaving each screen stuck on the broken page with no way to
+// receive the fix. A separate script block runs whatever the others do, and the head is
+// parsed before any markup a bad edit could mangle. Keep it small and leave it alone.
+(function () {
+  var PAGE_CHECK_MS = 30000;
+  var pageStamp = null;
+  function stampOf(text) {
+    var h = 0;
+    for (var i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
+    return text.length + ':' + h;
+  }
+  function checkPage() {
+    fetch(location.href, { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (text) {
+        if (text == null) return;
+        var stamp = stampOf(text);
+        if (pageStamp == null) { pageStamp = stamp; return; }
+        var dragging = document.body && document.body.classList.contains('dragging');
+        if (stamp !== pageStamp && !dragging) location.reload();
+      })
+      .catch(function () {});
+  }
+  checkPage();
+  setInterval(checkPage, PAGE_CHECK_MS);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) checkPage();
+  });
+})();
+</script>
 </head>
 <body>
 <header>
@@ -1241,6 +1294,7 @@
                (isAged(a, st, unread) ? ' aged' : '') +
                (a.starting ? ' starting' : '') +
                (a.outcome && a.outcome.ask ? ' has-ask' : '') +
+               (String(a.paneId).indexOf('rc:') === 0 ? ' remote' : '') +
                '" data-pane="' + esc(a.paneId) + '">' +
           '<div class="row">' +
             '<span class="dot ' + st + '"></span>' +
@@ -2136,6 +2190,7 @@
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register(BASE + 'sw.js').catch(function () {});
   }
+
   connect();
 })();
 </script>
