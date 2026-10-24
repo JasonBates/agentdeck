@@ -301,6 +301,7 @@ final class Summariser {
         states = states.filter { panes.contains($0.key) }
         promptsSeen = promptsSeen.filter { panes.contains($0.key) }
         titleAt = titleAt.filter { panes.contains($0.key) }
+        pinned = pinned.filter { panes.contains($0) }
     }
 
     // MARK: - Title and subtitle, from the transcript
@@ -321,6 +322,8 @@ final class Summariser {
     private var states: [String: Entry] = [:]
     private var promptsSeen: [String: Int] = [:]
     private var titleAt: [String: Int] = [:]
+    /// Panes whose `names` entry is the user's own, not the model's.
+    private var pinned: Set<String> = []
 
     let titleEvery = 8
 
@@ -389,8 +392,13 @@ final class Summariser {
         // is simply down still can't be hammered.
         // A name the user chose stands in for the model's, so subtitles are still written
         // against it and nothing is spent generating a title that would not be shown.
-        if let pinned = digest.userTitle {
-            names[pane] = Entry(label: pinned, screenHash: 0, updated: Date())
+        // Released with `/rename auto`: drop the user's name so a title is generated now
+        // rather than at the next interval.
+        if let title = digest.userTitle {
+            names[pane] = Entry(label: title, screenHash: 0, updated: Date())
+            pinned.insert(pane)
+        } else if pinned.remove(pane) != nil {
+            names[pane] = nil
         }
         let named = names[pane]
         let needsTitle = digest.userTitle != nil ? false

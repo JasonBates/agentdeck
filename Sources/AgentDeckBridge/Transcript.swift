@@ -139,6 +139,11 @@ enum Transcript {
     /// of the tail hold the current name; only lines that mention the type are parsed. The
     /// last name found is remembered per file, so a tail that happens to miss it doesn't
     /// hand the card back to the model.
+    ///
+    /// Claude has no way to clear a name, so `/rename auto` is the release: when that is
+    /// the newest name, the session has none and the model titles the card again.
+    static let releaseTitle = "auto"
+
     static func userTitle(path: String, size: Int, mtime: Date) -> String? {
         let lines = JSONL.tailLines(path, size: size, mtime: mtime)
         for line in lines.prefix(400) where line.contains("\"custom-title\"") {
@@ -149,7 +154,12 @@ enum Transcript {
             else { continue }
             let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !t.isEmpty else { continue }
-            titleLock.lock(); userTitles[path] = t; titleLock.unlock()
+            titleLock.lock(); defer { titleLock.unlock() }
+            if t.caseInsensitiveCompare(releaseTitle) == .orderedSame {
+                userTitles[path] = nil
+                return nil
+            }
+            userTitles[path] = t
             return t
         }
         titleLock.lock(); defer { titleLock.unlock() }

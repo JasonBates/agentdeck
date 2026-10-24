@@ -32,7 +32,7 @@ from Omarchy/Quickshell to macOS.
   Herdr tab in the selected project. Long-press and drag arranges the board per device.
 - An accepted title also becomes the Herdr tab label, so the sidebar and the deck agree.
   A Claude session renamed with `/rename` keeps that name as its title; the model then
-  writes only the subtitle and outcome.
+  writes only the subtitle and outcome. `/rename auto` hands the title back to the model.
 - Machine load, memory, the local model's residency and latency, and optionally your
   Claude and Codex quota windows in the footer.
 - Optionally, an [AeroSpace](https://github.com/nikitabobko/AeroSpace) workspace bar

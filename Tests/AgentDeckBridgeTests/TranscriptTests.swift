@@ -302,6 +302,24 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(digest?.lastPrompt, "make the deck honour it please")
     }
 
+    func testRenameAutoHandsTheTitleBackToTheModel() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentdeck-rename-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        func rename(_ title: String) -> String {
+            #"{"type":"custom-title","customTitle":"\#(title)","sessionId":"s"}"#
+        }
+        let opening = try claudeUserTurn("how do I rename this session in agentdeck")
+        try ([opening, rename("test title")].joined(separator: "\n") + "\n")
+            .write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(Transcript.digest(agent: "claude", path: url.path)?.userTitle, "test title")
+
+        try ([opening, rename("test title"), rename("Auto")].joined(separator: "\n") + "\n")
+            .write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertNil(Transcript.digest(agent: "claude", path: url.path)?.userTitle)
+    }
+
     func testUnrenamedSessionHasNoUserTitle() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentdeck-rename-\(UUID().uuidString).jsonl")
