@@ -28,6 +28,9 @@ enum ContextReader {
     private static var cache: [String: (stamp: Date, size: Int, value: ContextUse?)] = [:]
     private static var claudePaths: [String: String] = [:]
     private static var codexPaths: [String: String] = [:]
+    /// Where each moved Claude transcript continues, keyed by the old file's path and
+    /// valid while its size and mtime hold. Pruned to the live destinations.
+    private static var continuations: [String: (stamp: Date, size: Int, next: String?)] = [:]
     /// Lookups that found nothing, with when they were tried. A pane whose transcript
     /// does not exist yet — every new session, for its first few seconds, and any pane
     /// Herdr reports a session for that never writes one — used to walk the whole
@@ -51,14 +54,14 @@ enum ContextReader {
                 .replacingOccurrences(of: " ", with: "-")
             let root = "\(home)/.claude/projects"
             let p = "\(root)/\(slug)/\(value).jsonl"
-            if fm.fileExists(atPath: p) { return p }
+            if fm.fileExists(atPath: p) { return followContinuation(p) }
 
             // Claude replaces characters such as emoji with hyphens when naming its
             // project directories. Reproducing that private slugging rule is brittle:
             // a cwd containing "⭐️ Subjectiv" is stored under "----Subjectiv", so the
             // common spelling above cannot find it. The session UUID is authoritative;
             // fall back to checking each project directory for that exact filename.
-            return claudePath(for: value, under: root)
+            return claudePath(for: value, under: root).map(followContinuation)
         case "pi":
             // Herdr hands us the exact path, so there is nothing to resolve.
             guard session?.kind == "path", fm.fileExists(atPath: value) else { return nil }
@@ -88,6 +91,59 @@ enum ContextReader {
 
     /// Claude project directories are one level beneath `projects`. Check the exact UUID
     /// in each rather than guessing how Claude slugged arbitrary Unicode in the cwd.
+    /// Claude Code can carry a live conversation on in a new session file. It ends the
+    /// old transcript with `{"type":"continued-in","continuedInSessionId":…}`, but Herdr
+    /// keeps reporting the original session id, so the card went on reading a file
+    /// nothing writes to any more: a `/rename` made after the move never reached the
+    /// title, and the context gauge and outcome froze where the old file stopped.
+    ///
+    /// The link is the old file's last entry, so only its final few KB are read, and
+    /// once per change to that file. A chain of moves is followed a few hops at most.
+    static func followContinuation(_ path: String) -> String {
+        var current = path
+        for _ in 0..<4 {
+            guard let next = continuation(of: current), next != current else { break }
+            current = next
+        }
+        return current
+    }
+
+    private static func continuation(of path: String) -> String? {
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: path),
+              let size = attrs[.size] as? Int,
+              let mtime = attrs[.modificationDate] as? Date
+        else { return nil }
+        lock.lock()
+        if let hit = continuations[path], hit.size == size, hit.stamp == mtime {
+            lock.unlock()
+            return hit.next
+        }
+        lock.unlock()
+
+        var next: String?
+        if let fh = FileHandle(forReadingAtPath: path) {
+            defer { try? fh.close() }
+            let window = 4_096
+            if size > window { try? fh.seek(toOffset: UInt64(size - window)) }
+            let text = String(decoding: (try? fh.readToEnd()) ?? Data(), as: UTF8.self)
+            for line in text.split(separator: "\n").reversed().prefix(5)
+            where line.contains("\"continued-in\"") {
+                guard let d = line.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                      obj["type"] as? String == "continued-in",
+                      let id = obj["continuedInSessionId"] as? String, !id.isEmpty
+                else { continue }
+                let candidate = URL(fileURLWithPath: path).deletingLastPathComponent()
+                    .appendingPathComponent("\(id).jsonl").path
+                if fm.fileExists(atPath: candidate) { next = candidate }
+                break
+            }
+        }
+        lock.lock(); continuations[path] = (mtime, size, next); lock.unlock()
+        return next
+    }
+
     private static func claudePath(for uuid: String, under root: String) -> String? {
         let key = "\(root)\0\(uuid)"
         lock.lock()
@@ -154,6 +210,7 @@ enum ContextReader {
         cache = cache.filter { paths.contains($0.key) }
         claudePaths = claudePaths.filter { paths.contains($0.value) }
         codexPaths = codexPaths.filter { paths.contains($0.value) }
+        continuations = continuations.filter { $0.value.next.map(paths.contains) ?? false }
         misses = misses.filter { Date().timeIntervalSince($0.value) < missTTL }
     }
 
