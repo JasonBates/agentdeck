@@ -230,6 +230,7 @@ for variable in \
     AGENTDECK_TITLE_MODEL \
     AGENTDECK_NAMES \
     AGENTDECK_TAB_TITLES \
+    AGENTDECK_REMOTE_WORKSPACE \
     AGENTDECK_PUBLIC
 do
     value="${!variable-}"

@@ -221,6 +221,7 @@ persists any of these that are set when it runs.
 | `AGENTDECK_TITLE_MODEL` | `--title-model` | same as model | separate model for titles only |
 | `AGENTDECK_NAMES` | | `all` | `all`: the model names every card; `fallback`: only cards whose Herdr title is generic (pi, Codex) |
 | `AGENTDECK_TAB_TITLES` | | `on` | write accepted titles into Herdr tab labels; `off` keeps labels manual |
+| `AGENTDECK_REMOTE_WORKSPACE` | | none | label of the Herdr workspace running `claude remote-control` servers; its server cards are replaced by one card per phone or claude.ai thread, and tapping one opens the thread in the Claude desktop app, or on claude.ai/code in the desktop browser if the app isn't installed |
 | `AGENTDECK_PUBLIC_HOST` | | none | hostname a TLS proxy presents the bridge as |
 | `AGENTDECK_ALLOWED_ORIGINS` | | none | further `scheme://host[:port]` origins to answer for, comma-separated |
 | `AGENTDECK_PUBLIC` | | package `Public/` | directory containing `index.html` |

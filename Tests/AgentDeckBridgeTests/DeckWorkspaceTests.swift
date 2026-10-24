@@ -75,6 +75,22 @@ final class DeckWorkspaceTests: XCTestCase {
         XCTAssertEqual(payload.workspaces.first?.unseenDone, 0)
     }
 
+    /// The server panes in the remote-control workspace never become cards; its pill stays,
+    /// to hold the thread cards.
+    func testRemoteWorkspaceDropsServerCards() {
+        let shown = workspace(id: "w1", number: 1, focused: false)
+        let rc = workspace(id: "w2", number: 2, focused: false, label: "rc", repoKey: nil)
+        let snap = snapshot(workspaces: [shown, rc],
+                            focusedWorkspaceId: "w1",
+                            agents: [agent(paneId: "w1:p1", workspaceId: "w1", focused: false),
+                                     agent(paneId: "w2:p1", workspaceId: "w2", focused: false)])
+            .replacingRemoteServers(workspaceLabel: "rc", threads: [], opened: { _ in false })
+
+        let payload = Deck.payload(from: snap, herdrDetail: nil, source: nil, summariser: nil)
+        XCTAssertEqual(payload.agents.map(\.paneId), ["w1:p1"])
+        XCTAssertEqual(payload.workspaces.count, 2)
+    }
+
     private func agent(paneId: String,
                        workspaceId: String,
                        focused: Bool,
@@ -94,16 +110,18 @@ final class DeckWorkspaceTests: XCTestCase {
         )
     }
 
-    private func workspace(id: String, number: Int, focused: Bool) -> HerdrWorkspace {
+    private func workspace(id: String, number: Int, focused: Bool,
+                           label: String = "AgentDeck",
+                           repoKey: String? = "agentdeck") -> HerdrWorkspace {
         HerdrWorkspace(
             workspaceId: id,
-            label: "AgentDeck",
+            label: label,
             number: number,
             agentStatus: "idle",
             focused: focused,
             paneCount: 0,
             tabCount: 0,
-            worktree: HerdrWorktree(repoKey: "agentdeck", repoName: "AgentDeck")
+            worktree: repoKey.map { HerdrWorktree(repoKey: $0, repoName: label) }
         )
     }
 

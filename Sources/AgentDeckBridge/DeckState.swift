@@ -213,8 +213,10 @@ enum Deck {
             // buy a subprocess per pane per tick and never return anything.
             var phase: Phase?
             var background: String?
+            // A phone thread has no pane to read; its card works from the transcript alone.
+            let screenSource = a.paneId.hasPrefix(RemoteThread.panePrefix) ? nil : source
             if a.agentStatus == "working" {
-                if let screen = source?.visibleScreenThrottled(pane: a.paneId) {
+                if let screen = screenSource?.visibleScreenThrottled(pane: a.paneId) {
                     phase = StatusLine.parse(screen)
                     background = BackgroundLine.summary(BackgroundLine.parse(screen))
                     Deck.phaseCache[a.paneId] = phase
@@ -234,7 +236,7 @@ enum Deck {
             } else {
                 Deck.phaseCache[a.paneId] = nil
                 if a.agent == "claude" || a.agent == "codex",
-                   let screen = source?.visibleScreenThrottled(
+                   let screen = screenSource?.visibleScreenThrottled(
                        pane: a.paneId,
                        minInterval: Deck.backgroundInterval,
                        lines: 16) {

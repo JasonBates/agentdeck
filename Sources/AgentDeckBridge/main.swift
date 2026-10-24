@@ -73,6 +73,12 @@ let publicHost = env["AGENTDECK_PUBLIC_HOST"]?.trimmingCharacters(in: .whitespac
 // the path form on 443. See OriginPolicy.
 let allowedOrigins = (env["AGENTDECK_ALLOWED_ORIGINS"] ?? "")
     .split(separator: ",").map { String($0) }
+// Label of the Herdr workspace holding `claude remote-control` servers. Its server cards
+// are replaced by one card per phone thread. See RemoteThreads.swift.
+let remoteWorkspace = env["AGENTDECK_REMOTE_WORKSPACE"]
+    .map { $0.trimmingCharacters(in: .whitespaces) }
+    .flatMap { $0.isEmpty ? nil : $0 }
+let remoteThreads: RemoteThreads? = remoteWorkspace == nil ? nil : RemoteThreads()
 
 let modelMonitor: LocalModelMonitor? = modelName == "off"
     ? nil
@@ -121,6 +127,18 @@ let tabTitleSync: TabTitleSync? = {
 }()
 
 server.onFocus = { pane in
+    // A phone thread has no pane: open it in the Claude app, or on claude.ai/code in the
+    // desktop's browser when the app can't take it.
+    if pane.hasPrefix(RemoteThread.panePrefix) {
+        let id = String(pane.dropFirst(RemoteThread.panePrefix.count))
+        let thread = RemoteThread(sessionId: id, transcriptId: "", cwd: "")
+        let opened = [thread.appURL, thread.url].compactMap { $0 }.contains { url in
+            (try? Shell.run("/usr/bin/open", [url.absoluteString])) != nil
+        }
+        guard opened else { return false }
+        remoteThreads?.markOpened(pane: pane)
+        return true
+    }
     guard let src = source else { return false }
     do { try src.focus(pane: pane); return true }
     catch {
@@ -194,7 +212,12 @@ func runTick() {
     let eventStatus = events?.status ?? FeedStatus(ok: false, detail: "not started")
     if let src = source {
         do {
-            let snap = try src.snapshot()
+            var snap = try src.snapshot()
+            if let remoteThreads {
+                snap = snap.replacingRemoteServers(workspaceLabel: remoteWorkspace,
+                                                   threads: remoteThreads.current(),
+                                                   opened: remoteThreads.takeOpened)
+            }
             payload = Deck.payload(from: snap, herdrDetail: "herdr \(snap.version)",
                                    source: src, summariser: summariser, events: eventStatus)
             tabTitleSync?.reconcile(snapshot: snap, deckAgents: payload.agents)
