@@ -49,7 +49,7 @@ struct DeckAgent: Encodable {
     var status: String      // working | idle | unknown
     var focused: Bool
     var title: String       // model-written session name, or the Herdr-derived fallback
-    var titleSource: String // "model" | "herdr"
+    var titleSource: String // "user" | "model" | "herdr"
     /// No readable transcript content yet: the session has been created and nothing has
     /// been said. The page shows a placeholder title and the directory instead of
     /// Herdr's terminal title, which at this point is just the directory too.
@@ -262,16 +262,19 @@ enum Deck {
                                                focused: a.focused,
                                                replyKey: digest?.lastReplyKey,
                                                writtenAt: digest?.stamp)
-            let modelName = wantsName ? summariser?.name(for: a.paneId) : nil
+            // A `/rename` outranks everything: it is the one title the user wrote.
+            let userTitle = digest?.userTitle
+            let modelName = userTitle == nil && wantsName ? summariser?.name(for: a.paneId) : nil
+            let chosenName = userTitle ?? modelName
             // A promoted tab label leaves the workspace:tab address only while it is
             // actually on show as the title. In the default naming mode the model names
             // every card, which puts the promoted label straight back out of sight — so
             // blanking it there would drop the tab from the address for no visible
             // reason, and two panes of one workspace would be addressed inconsistently.
-            if promotedTab, modelName == nil { tabLabel = "" }
+            if promotedTab, chosenName == nil { tabLabel = "" }
             // When AgentDeck has written its card title into Herdr, the address would
             // otherwise repeat the same words directly above itself.
-            if let modelName, tabLabel == modelName { tabLabel = "" }
+            if let chosenName, tabLabel == chosenName { tabLabel = "" }
             // The subtitle is always useful, even where Herdr's own title is kept.
             let focus = transcript != nil ? summariser?.subtitle(for: a.paneId) : nil
             let outcome = transcript != nil
@@ -286,8 +289,8 @@ enum Deck {
                 // names cards Herdr couldn't — i.e. pi and codex, whose terminal titles
                 // are just a directory. Claude writes its own curated session title, and
                 // a 3b model summarising the same transcript tends to do worse.
-                title: modelName ?? title,
-                titleSource: modelName != nil ? "model" : "herdr",
+                title: chosenName ?? title,
+                titleSource: userTitle != nil ? "user" : modelName != nil ? "model" : "herdr",
                 starting: digest == nil,
                 focus: focus,
                 outcome: outcome,

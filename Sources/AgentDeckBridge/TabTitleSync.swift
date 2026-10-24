@@ -55,7 +55,7 @@ final class TabTitleSync {
             let modelTitle: String?
             if agents.count == 1,
                let card = cardsByPane[agents[0].paneId],
-               card.titleSource == "model" {
+               card.titleSource == "model" || card.titleSource == "user" {
                 modelTitle = card.title
             } else {
                 modelTitle = nil

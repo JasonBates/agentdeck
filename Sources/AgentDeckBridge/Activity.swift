@@ -387,8 +387,14 @@ final class Summariser {
         // under Herdr's fallback title for its whole life on exactly that path. An empty
         // title is retried on the same cooldown the activity label uses, so a model that
         // is simply down still can't be hammered.
+        // A name the user chose stands in for the model's, so subtitles are still written
+        // against it and nothing is spent generating a title that would not be shown.
+        if let pinned = digest.userTitle {
+            names[pane] = Entry(label: pinned, screenHash: 0, updated: Date())
+        }
         let named = names[pane]
-        let needsTitle = (named?.label.isEmpty ?? true)
+        let needsTitle = digest.userTitle != nil ? false
+            : (named?.label.isEmpty ?? true)
             ? named.map { Date().timeIntervalSince($0.updated) >= cooldown } ?? true
             : (count - (titleAt[pane] ?? 0)) >= titleInterval(promptsSeen: count)
         let needsSubtitle = isNewPrompt

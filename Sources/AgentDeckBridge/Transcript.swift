@@ -34,6 +34,9 @@ struct TranscriptDigest {
     /// This is what the state summary reads: did it finish, what's next, what's blocked.
     var lastReply: String
     var lastReplyKey: Int
+    /// A name the user gave the session themselves (Claude's `/rename`). When present it
+    /// is the card's title outright and the model is not asked for one.
+    var userTitle: String? = nil
     var stamp: Date
 }
 
@@ -119,8 +122,38 @@ enum Transcript {
             lastPromptKey: (users.first ?? "").hashValue,
             lastReply: assistants.first ?? "",
             lastReplyKey: (assistants.first ?? "").hashValue,
+            userTitle: kind == "claude" ? userTitle(path: path, size: size, mtime: mtime) : nil,
             stamp: mtime
         )
+    }
+
+    private static let titleLock = NSLock()
+    private static var userTitles: [String: String] = [:]
+
+    /// The session's `/rename`, if it has one. Claude records it as a
+    /// `{"type":"custom-title","customTitle":…}` line rather than as a user turn, so the
+    /// digest's message filters never see it, and in the default naming mode the model
+    /// retitled the card from the prompts regardless of what the user had called it.
+    ///
+    /// Claude re-appends the line every few dozen entries, so the newest few hundred lines
+    /// of the tail hold the current name; only lines that mention the type are parsed. The
+    /// last name found is remembered per file, so a tail that happens to miss it doesn't
+    /// hand the card back to the model.
+    static func userTitle(path: String, size: Int, mtime: Date) -> String? {
+        let lines = JSONL.tailLines(path, size: size, mtime: mtime)
+        for line in lines.prefix(400) where line.contains("\"custom-title\"") {
+            guard let d = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  obj["type"] as? String == "custom-title",
+                  let raw = obj["customTitle"] as? String
+            else { continue }
+            let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty else { continue }
+            titleLock.lock(); userTitles[path] = t; titleLock.unlock()
+            return t
+        }
+        titleLock.lock(); defer { titleLock.unlock() }
+        return userTitles[path]
     }
 
     private static let openingLock = NSLock()
@@ -338,5 +371,6 @@ enum Transcript {
     static func retain(paths: Set<String>) {
         cacheLock.lock(); digests = digests.filter { paths.contains($0.key) }; cacheLock.unlock()
         openingLock.lock(); openings = openings.filter { paths.contains($0.key) }; openingLock.unlock()
+        titleLock.lock(); userTitles = userTitles.filter { paths.contains($0.key) }; titleLock.unlock()
     }
 }

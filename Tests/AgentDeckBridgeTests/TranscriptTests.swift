@@ -275,6 +275,44 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(digest?.lastPrompt, "agentdeck wont let me drag a card to the third row when there is only one row of cards. can you fix that please, test, ship and restart it")
     }
 
+    // MARK: - /rename
+
+    func testClaudeRenameBecomesTheUserTitleAndTheLatestWins() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentdeck-rename-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        func rename(_ title: String) throws -> String {
+            let object: [String: Any] = ["type": "custom-title", "customTitle": title,
+                                         "sessionId": "s"]
+            let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        try (try [claudeUserTurn("how do I rename this session in agentdeck"),
+                  rename("first name"),
+                  claudeUserTurn("make the deck honour it please"),
+                  rename("  Pin user titles on cards  ")]
+            .joined(separator: "\n") + "\n")
+            .write(to: url, atomically: true, encoding: .utf8)
+
+        let digest = Transcript.digest(agent: "claude", path: url.path)
+        XCTAssertEqual(digest?.userTitle, "Pin user titles on cards")
+        // The rename is not a request, so it must not leak into the title inputs.
+        XCTAssertEqual(digest?.lastPrompt, "make the deck honour it please")
+    }
+
+    func testUnrenamedSessionHasNoUserTitle() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentdeck-rename-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try (try claudeUserTurn("fix the drag bug on the deck") + "\n")
+            .write(to: url, atomically: true, encoding: .utf8)
+
+        XCTAssertNil(Transcript.digest(agent: "claude", path: url.path)?.userTitle)
+    }
+
     // MARK: - Headings that describe the assistant instead of the work
 
     func testRejectsHeadingsDescribingTheAssistantsReply() {
