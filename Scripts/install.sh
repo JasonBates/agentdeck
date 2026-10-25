@@ -223,7 +223,8 @@ plutil -insert EnvironmentVariables.PATH -string "$SERVICE_PATH" "$PLIST_TEMP"
 plutil -insert EnvironmentVariables.AGENTDECK_PORT -string "$BRIDGE_PORT" "$PLIST_TEMP"
 # Persist runtime choices supplied to the installer. Otherwise an invocation such as
 # `AGENTDECK_MODEL=off Scripts/install.sh` would affect the build shell but disappear
-# when launchd starts the bridge.
+# when launchd starts the bridge. A choice left unset keeps the installed plist's value,
+# so a plain reinstall can't quietly switch a feature off; set it empty to clear it.
 for variable in \
     AGENTDECK_INTERVAL \
     AGENTDECK_MODEL \
@@ -233,7 +234,11 @@ for variable in \
     AGENTDECK_REMOTE_WORKSPACE \
     AGENTDECK_PUBLIC
 do
-    value="${!variable-}"
+    if [[ -n "${!variable+set}" ]]; then
+        value="${!variable}"
+    else
+        value="$(plutil -extract "EnvironmentVariables.$variable" raw -o - "$PLIST" 2>/dev/null || true)"
+    fi
     if [[ -n "$value" ]]; then
         plutil -insert "EnvironmentVariables.$variable" -string "$value" "$PLIST_TEMP"
     fi

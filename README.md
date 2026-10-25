@@ -211,7 +211,9 @@ Settings, Display & Brightness, Auto-Lock, Never; and Guided Access to pin it.
 ## Configuration
 
 Runtime settings are environment variables, or flags for the first four. The installer
-persists any of these that are set when it runs.
+persists any of these that are set when it runs. A reinstall that leaves one unset keeps
+the value already installed, so `AGENTDECK_REMOTE_WORKSPACE` or `AGENTDECK_MODEL` need
+not be repeated; set it to an empty string to clear it.
 
 | Environment | CLI | Default | Purpose |
 |---|---|---|---|
