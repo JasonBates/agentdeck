@@ -293,6 +293,20 @@
   }
   /* The sweep is live information, not a shade, so selection doesn't dim it. */
   .card.working.focused::before { opacity: 1; }
+  /* Two things are focused at once: the Herdr pane on the desktop, and the phone thread
+     open in the Claude app. They get the same ring in different colours so both show
+     and neither can be mistaken for the other — white for Herdr, violet for the app.
+     Violet because every other hue on the page already means something: amber working,
+     green finished, red blocked, teal background work, periwinkle AeroSpace focus. */
+  .card.remote { --ring: rgba(192,132,252,.9); }
+  .card.remote.focused {
+    box-shadow: 0 0 0 3px var(--ring), 0 10px 30px -10px rgba(0,0,0,.9);
+  }
+  .card.remote.working.focused {
+    box-shadow: 0 0 0 3px var(--bg),
+                0 0 0 6px var(--ring),
+                0 10px 30px -10px rgba(0,0,0,.9);
+  }
   .card.flash   { background: #2a2f39; }
   /* Drag to rearrange */
   .card.lifted {
@@ -312,7 +326,7 @@
      sweep, the corner dot), so the mark can't live on one of those. A data URI can't
      read a CSS variable, which is why the grey is spelled out. */
   .card.remote {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 4 64 46'%3E%3Cg fill='none' stroke='%23868e9c' stroke-opacity='.1' stroke-width='4' stroke-linecap='round'%3E%3Cpath d='M23.5 35.5a12 12 0 0 1 17 0'/%3E%3Cpath d='M15 27a24 24 0 0 1 34 0'/%3E%3Cpath d='M6.5 18.5a36 36 0 0 1 51 0'/%3E%3C/g%3E%3Ccircle cx='32' cy='44' r='4' fill='%23868e9c' fill-opacity='.1'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 4 64 46'%3E%3Cg fill='none' stroke='%23868e9c' stroke-opacity='.24' stroke-width='5' stroke-linecap='round'%3E%3Cpath d='M23.5 35.5a12 12 0 0 1 17 0'/%3E%3Cpath d='M15 27a24 24 0 0 1 34 0'/%3E%3Cpath d='M6.5 18.5a36 36 0 0 1 51 0'/%3E%3C/g%3E%3Ccircle cx='32' cy='44' r='4' fill='%23868e9c' fill-opacity='.24'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: center;
     background-size: auto 46%;

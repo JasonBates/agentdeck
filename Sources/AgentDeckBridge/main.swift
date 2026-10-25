@@ -216,7 +216,7 @@ func runTick() {
             if let remoteThreads {
                 snap = snap.replacingRemoteServers(workspaceLabel: remoteWorkspace,
                                                    threads: remoteThreads.current(),
-                                                   opened: remoteThreads.takeOpened)
+                                                   opened: remoteThreads.isOpen)
             }
             payload = Deck.payload(from: snap, herdrDetail: "herdr \(snap.version)",
                                    source: src, summariser: summariser, events: eventStatus)

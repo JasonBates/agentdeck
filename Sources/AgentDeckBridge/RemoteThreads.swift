@@ -103,7 +103,7 @@ final class RemoteThreads {
     private var threads: [RemoteThread] = []
     private var scannedAt = Date.distantPast
     private var cwds: [Int32: String] = [:]
-    private var opened: Set<String> = []
+    private var open: String?
     private let interval: TimeInterval = 5
 
     /// Live threads with something in their transcript, rescanning `ps` at most every
@@ -123,17 +123,21 @@ final class RemoteThreads {
                                 transcriptId: RemoteThread.transcriptId(sdkURL: t.sdkURL),
                                 cwd: cwd)
         }
+        if let open, !threads.contains(where: { $0.paneId == open }) { self.open = nil }
         return threads
     }
 
-    /// Tapping a card opens the thread in a browser; count that as looking at it.
+    /// Tapping a card opens the thread in the Claude app, which shows one thread at a
+    /// time. The app says nothing about which one it is showing (its window title is
+    /// just "Claude"), so the thread last opened from here is taken to be it until another
+    /// is opened or it ends. Threads switched to inside the app itself aren't seen.
     func markOpened(pane: String) {
-        lock.lock(); opened.insert(pane); lock.unlock()
+        lock.lock(); open = pane; lock.unlock()
     }
 
-    func takeOpened(pane: String) -> Bool {
+    func isOpen(pane: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return opened.remove(pane) != nil
+        return open == pane
     }
 
     private static func cwd(of pid: Int32) -> String? {
