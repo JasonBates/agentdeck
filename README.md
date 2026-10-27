@@ -220,6 +220,7 @@ not be repeated; set it to an empty string to clear it.
 | `AGENTDECK_PORT` | `--port` | `9798` | loopback HTTP port |
 | `AGENTDECK_INTERVAL` | `--interval` | `1.0` | reconciliation poll, in seconds |
 | `AGENTDECK_MODEL` | `--model` | `gemma4:12b` | heading model; `off` disables all generation |
+| `AGENTDECK_NUM_CTX` | | `4096` | context window requested from Ollama; set it to match any other client of the same model, or the two make Ollama reload the model between them; a client on Ollama's OpenAI-style API, such as pi, can't send a window, so give it an Ollama model whose Modelfile sets `PARAMETER num_ctx` to the same value |
 | `AGENTDECK_TITLE_MODEL` | `--title-model` | same as model | separate model for titles only |
 | `AGENTDECK_NAMES` | | `all` | `all`: the model names every card; `fallback`: only cards whose Herdr title is generic (pi, Codex) |
 | `AGENTDECK_TAB_TITLES` | | `on` | write accepted titles into Herdr tab labels; `off` keeps labels manual |

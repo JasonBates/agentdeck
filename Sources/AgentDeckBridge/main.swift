@@ -67,6 +67,9 @@ func currentJSON() -> Data {
 // returns empty content.
 let modelName = flag("--model", env: "AGENTDECK_MODEL", "gemma4:12b")
 let titleModelName = flag("--title-model", env: "AGENTDECK_TITLE_MODEL", modelName)
+// 4096 covers every heading prompt. Raise it only to match another client of the same
+// model, such as pi, so Ollama keeps one shared runner instead of reloading per caller.
+let modelContext = Int(env["AGENTDECK_NUM_CTX"] ?? "") ?? 4096
 let publicHost = env["AGENTDECK_PUBLIC_HOST"]?.trimmingCharacters(in: .whitespacesAndNewlines)
 // Further `scheme://host[:port]` origins the bridge answers for, comma-separated. The
 // installer adds the Tailscale Serve port form here; AGENTDECK_PUBLIC_HOST alone covers
@@ -82,12 +85,12 @@ let remoteThreads: RemoteThreads? = remoteWorkspace == nil ? nil : RemoteThreads
 
 let modelMonitor: LocalModelMonitor? = modelName == "off"
     ? nil
-    : LocalModelMonitor(model: modelName)
+    : LocalModelMonitor(model: modelName, context: modelContext)
 Deck.localModel = modelMonitor
 
 let summariser: Summariser? = modelName == "off"
     ? nil
-    : Summariser(model: modelName, titleModel: titleModelName,
+    : Summariser(model: modelName, titleModel: titleModelName, numCtx: modelContext,
                  modelMonitor: modelMonitor)
 
 let server = HTTPServer(port: port)

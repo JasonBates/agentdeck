@@ -245,12 +245,17 @@ final class Summariser {
     let modelMonitor: LocalModelMonitor?
     let cooldown: TimeInterval
     let endpoint: URL
+    /// Context window requested from Ollama. Ollama keeps one runner per weights file and
+    /// reloads it whenever a caller asks for a different window, so a pi or other client
+    /// sharing this model must match it (AGENTDECK_NUM_CTX) or the two evict each other.
+    let numCtx: Int
 
     init(model: String, titleModel: String? = nil, cooldown: TimeInterval = 20,
-         endpoint: String = "http://127.0.0.1:11434",
+         endpoint: String = "http://127.0.0.1:11434", numCtx: Int = 4096,
          modelMonitor: LocalModelMonitor? = nil) {
         self.model = model
         self.titleModel = titleModel ?? model
+        self.numCtx = numCtx
         self.cooldown = cooldown
         self.endpoint = URL(string: endpoint + "/api/chat")!
         self.modelMonitor = modelMonitor
@@ -783,7 +788,7 @@ final class Summariser {
                 // for a 2 GB model and pushed the machine into swap. Every prompt here
                 // is well under 1k tokens: screen tail 2000 chars, transcript digest
                 // ~1800, latest reply 1400, plus <90 tokens of output.
-                "num_ctx": 4096,
+                "num_ctx": numCtx,
             ],
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
