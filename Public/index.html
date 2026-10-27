@@ -67,7 +67,6 @@
      blanking — stale information is still worth reading, or there would be no reason to
      leave it on screen. The clock is local, not payload, so it stays put. */
   body.stale .pills,
-  body.stale .next-action,
   body.stale .new-tab-action,
   body.stale #grid,
   body.stale #aero,
@@ -113,26 +112,6 @@
     font: 600 10px/17px var(--mono); text-align: center;
   }
   .pill .n { font-variant-numeric: tabular-nums; color: var(--dim); }
-  /* Next is a command, not another workspace filter. The squarer silhouette keeps
-     that distinction visible even when every control is using the same muted palette. */
-  .next-action {
-    appearance: none; min-height: 38px; padding: 0 9px; border-radius: 8px;
-    border: 1px solid #657184; background: #20252d; color: var(--text);
-    display: flex; align-items: center; align-self: stretch; gap: 5px; flex: none;
-    font: 650 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
-    transition: background .12s ease, transform .12s ease;
-  }
-  .next-action:active:not(:disabled) { background: #303744; transform: scale(.96); }
-  .next-action .next-count {
-    min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px;
-    background: var(--idle); color: #fff;
-    font: 700 10px/17px var(--mono); text-align: center;
-  }
-  .next-action.has-blocked { border-color: #9a514f; background: #2b181b; }
-  .next-action.has-blocked .next-count { background: var(--dead); }
-  .next-action:disabled {
-    border-color: var(--line); background: var(--card); color: var(--dim); opacity: .65;
-  }
   .new-tab-action {
     appearance: none; width: 38px; height: 38px; padding: 0; border-radius: 8px;
     border: 1px solid var(--line); background: var(--card); color: var(--muted);
@@ -730,11 +709,10 @@
     .brand { font-size: 9px; letter-spacing: .11em; }
     .pills { gap: 5px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
     .pills::-webkit-scrollbar { display: none; }
-    .pill, .next-action, .new-tab-action {
+    .pill, .new-tab-action {
       min-height: 44px; padding: 0 11px; flex: none;
       font-size: 11px; gap: 5px;
     }
-    .next-action { align-self: center; height: 44px; border-radius: 7px; font-size: 9px; }
     .new-tab-action { width: 44px; height: 44px; padding: 0; font-size: 24px; }
     .clock { font-size: 11px; }
 
@@ -925,8 +903,6 @@
 <body>
 <header>
   <span class="brand">AGENTDECK</span>
-  <button type="button" class="next-action" id="nextAction" disabled
-          aria-label="No agents need attention"><span>Next</span><span>—</span></button>
   <div class="pills" id="pills"></div>
   <span class="live" id="live"></span>
   <span class="clock" id="clock">--:--</span>
@@ -966,7 +942,6 @@
 
   var grid = document.getElementById('grid');
   var pills = document.getElementById('pills');
-  var nextAction = document.getElementById('nextAction');
   var newTabAction = document.getElementById('newTabAction');
   var live = document.getElementById('live');
   var clock = document.getElementById('clock');
@@ -975,7 +950,13 @@
   var age = document.getElementById('age');
   var bridgeState = document.getElementById('bridgeState');
   var lastMsg = 0;
-  var selected = 'all';   // which pill is filtering the grid
+  // The deck holds two boards, one of Herdr panes and one of remote-control threads
+  // (the phone and claude.ai ones), each with its own All pill. Their ids can't be
+  // mistaken for a project's, which are Herdr workspace ids or repo keys.
+  var ALL_HERDR = ':herdr', ALL_RC = ':rc';
+  function isRemote(paneId) { return String(paneId).indexOf('rc:') === 0; }
+  function isBoard(id) { return id === ALL_HERDR || id === ALL_RC; }
+  var selected = ALL_HERDR;   // which pill is filtering the grid
   var last = null;        // last payload, so a pill tap can re-render without waiting
   var newTabWorkspaceId = null;
   var creatingTab = false;
@@ -1009,7 +990,10 @@
 
   // Drop onto another card: they trade cells. Sliding a whole run of cards along to
   // make room is what the gaps exist to avoid, so nothing else on the board moves.
+  // The two boards number their cells separately, so a phone thread and a Herdr pane
+  // side by side in a project view have no cells to trade.
   function swapSlots(dragId, targetId) {
+    if (isRemote(dragId) !== isRemote(targetId)) return;
     var a = slots[dragId], b = slots[targetId];
     if (typeof a !== 'number' || typeof b !== 'number') return;
     slots[dragId] = b; slots[targetId] = a;
@@ -1041,7 +1025,8 @@
   // open refills the board instead of stretching it — the deck stays as tall as the
   // cards need. Slots are numbered along the flow, so scanning up from zero is a
   // top-row-down, left-to-right scan at whatever width the deck is being read at.
-  function placeAgents(agents) {
+  // One board at a time: `remote` says which, so only that board's cells count as taken.
+  function placeAgents(agents, remote) {
     var ordered = agents.slice().sort(function (a, b) {
       var x = slots[a.paneId], y = slots[b.paneId];
       if (typeof x !== 'number') x = Infinity;
@@ -1053,7 +1038,9 @@
     // can't be handed a cell a card further down the sort still holds — one race
     // shouldn't shunt a run of cards along.
     var claimed = {};
-    Object.keys(slots).forEach(function (id) { claimed[slots[id]] = true; });
+    Object.keys(slots).forEach(function (id) {
+      if (isRemote(id) === remote) claimed[slots[id]] = true;
+    });
 
     // Two ways to find a cell. A new pane takes the first one with no card in it,
     // reservation or not: a pane that has just exited already reads as a hole on the
@@ -1081,8 +1068,8 @@
     });
     if (changed) saveSlots();
     // Sorted again on the slots as they finished up: a pane that just dropped into a
-    // gap belongs where the gap was, and the filtered view and Next both read this
-    // order as the order of the deck.
+    // gap belongs where the gap was, and the filtered view reads this order as the
+    // order of the deck.
     return ordered.sort(function (a, b) { return slots[a.paneId] - slots[b.paneId]; });
   }
 
@@ -1178,32 +1165,47 @@
     return '<span class="ago">replied ' + t + '</span>';
   }
 
-  // Only states that genuinely warrant a visit belong behind Next. Context pressure
-  // and long-running work remain visible on their cards, but don't unexpectedly move
-  // the desktop. Within each class, preserve the user's card arrangement.
-  function attentionQueue(agents) {
-    return agents.filter(function (a) {
-      return a.status === 'blocked' || (a.unread && a.status !== 'working');
-    }).sort(function (a, b) {
-      return (a.status === 'blocked' ? 0 : 1) - (b.status === 'blocked' ? 0 : 1);
+  // The Herdr workspace that hosts the remote-control servers. The bridge swaps its
+  // panes for one card per thread, so it is only recognisable while a thread is open;
+  // it is remembered so its pill stays gone once the last thread closes.
+  var rcWorkspace = null;
+  try { rcWorkspace = localStorage.getItem('agentdeck.rcWorkspace'); } catch (e) {}
+
+  // Which project folders a thread belongs to, learned from the Herdr cards in each.
+  // Kept across payloads so a project whose panes have all gone quiet still claims
+  // the threads working in it.
+  var projectDirs = {};
+
+  // A phone thread joins the project it is working in: the deepest one whose Herdr
+  // cards sit in the thread's folder or above it, or else the one named after the
+  // folder. A thread outside every project lives in All RC alone.
+  function projectFor(a, ws) {
+    var cwd = String(a.cwd || ''), best = null, depth = -1;
+    Object.keys(projectDirs).forEach(function (id) {
+      Object.keys(projectDirs[id]).forEach(function (dir) {
+        if ((cwd === dir || cwd.indexOf(dir + '/') === 0) && dir.length > depth) {
+          best = id; depth = dir.length;
+        }
+      });
     });
+    if (best) return best;
+    var named = ws.find(function (w) { return w.label === a.project; });
+    return named ? named.id : null;
   }
 
-  function renderNext(queue) {
-    if (!queue.length) {
-      nextAction.className = 'next-action';
-      nextAction.disabled = true;
-      nextAction.setAttribute('aria-label', 'No agents need attention');
-      nextAction.innerHTML = '<span>Next</span><span>—</span>';
-      return;
-    }
-    var blocked = queue.some(function (a) { return a.status === 'blocked'; });
-    nextAction.className = 'next-action' + (blocked ? ' has-blocked' : '');
-    nextAction.disabled = false;
-    nextAction.setAttribute('aria-label', 'Focus next agent needing attention; ' +
-                            queue.length + ' total');
-    nextAction.innerHTML = '<span>Next</span><span class="next-count">' +
-                           queue.length + '</span>';
+  // Pill counts come from the cards rather than the bridge, which counts a phone
+  // thread under the remote-control workspace instead of the project it works in.
+  function tally(agents, focused) {
+    return {
+      agentCount: agents.length,
+      working: agents.filter(function (a) { return a.status === 'working'; }).length,
+      // Green for exactly the reason a card is: finished work you haven't looked at.
+      unseenDone: agents.filter(function (a) {
+        return a.unread && a.status !== 'working';
+      }).length,
+      unread: agents.filter(function (a) { return a.unread; }).length,
+      focused: focused
+    };
   }
 
   function render(d) {
@@ -1212,16 +1214,32 @@
     // A live update every few seconds would otherwise rebuild the grid mid-drag and
     // throw away the card under your finger. Repaint happens when the drag ends.
     if (lifted) return;
-    // A project can disappear while filtered to it; fall back rather than blank out.
-    if (selected !== 'all' && !(d.workspaces || []).some(function (w) {
-      return w.id === selected;
-    })) selected = 'all';
+
+    var all = d.agents || [];
+    var herdrAgents = all.filter(function (a) { return !isRemote(a.paneId); });
+    var rcAgents = all.filter(function (a) { return isRemote(a.paneId); });
+    if (rcAgents.length && rcAgents[0].workspaceId !== rcWorkspace) {
+      rcWorkspace = rcAgents[0].workspaceId;
+      try { localStorage.setItem('agentdeck.rcWorkspace', rcWorkspace); } catch (e) {}
+    }
+    herdrAgents.forEach(function (a) {
+      var id = a.projectId || a.workspaceId;
+      if (a.cwd) (projectDirs[id] = projectDirs[id] || {})[a.cwd] = true;
+    });
+
     // project pills (parent checkout and linked worktrees share one repo identity)
-    var ws = d.workspaces || [];
-    var totals = ws.reduce(function (t, w) {
-      t.n += w.agentCount; t.working += w.working; t.done += w.unseenDone;
-      t.unread += w.unread; return t;
-    }, { n: 0, working: 0, done: 0, unread: 0 });
+    var ws = (d.workspaces || []).filter(function (w) { return w.id !== rcWorkspace; });
+    var threadProject = {};
+    rcAgents.forEach(function (a) { threadProject[a.paneId] = projectFor(a, ws); });
+    function inProject(a, id) {
+      return isRemote(a.paneId) ? threadProject[a.paneId] === id
+                                : (a.projectId || a.workspaceId) === id;
+    }
+
+    // A project can disappear while filtered to it; fall back rather than blank out.
+    if (!isBoard(selected) && !ws.some(function (w) {
+      return w.id === selected;
+    })) selected = ALL_HERDR;
 
     function pill(id, label, w) {
       var cls = 'pill';
@@ -1238,42 +1256,47 @@
              '</span>';
     }
 
-    releaseDeadSlots(d.agents || [], d.herdr && d.herdr.ok);
-    var allAgents = placeAgents(d.agents || []);
-    var attention = attentionQueue(allAgents);
-    renderNext(attention);
-    pills.innerHTML = pill('all', 'All', {
-        agentCount: totals.n, working: totals.working,
-        unseenDone: totals.done, unread: totals.unread, focused: false
-      }) +
-      ws.map(function (w) { return pill(w.id, w.label, w); }).join('');
+    releaseDeadSlots(all, d.herdr && d.herdr.ok);
+    herdrAgents = placeAgents(herdrAgents, false);
+    rcAgents = placeAgents(rcAgents, true);
+    pills.innerHTML = pill(ALL_HERDR, 'All Herdr', tally(herdrAgents, false)) +
+      pill(ALL_RC, 'All RC', tally(rcAgents, false)) +
+      ws.map(function (w) {
+        return pill(w.id, w.label, tally(herdrAgents.concat(rcAgents).filter(function (a) {
+          return inProject(a, w.id);
+        }), w.focused));
+      }).join('');
 
     var selectedWorkspace = ws.find(function (w) { return w.id === selected; });
     newTabWorkspaceId = selectedWorkspace ? selectedWorkspace.newTabWorkspaceId : null;
-    newTabAction.hidden = selected === 'all';
+    newTabAction.hidden = isBoard(selected);
     newTabAction.disabled = creatingTab || !newTabWorkspaceId || !(d.herdr && d.herdr.ok);
     newTabAction.setAttribute('aria-label', selectedWorkspace
       ? 'Create a new tab in ' + selectedWorkspace.label
       : 'Create a new tab');
 
-    // agent cards, filtered by the chosen pill and arranged as you left them
-    var agents = allAgents.filter(function (a) {
-      // New payloads group by repository so linked worktrees stay within one project.
-      // workspaceId is the compatibility fallback for an older bridge.
-      return selected === 'all' || (a.projectId || a.workspaceId) === selected;
-    });
+    // agent cards, filtered by the chosen pill and arranged as you left them.
+    // A project shows its Herdr cards first, then its threads, each in its board's
+    // order. New payloads group by repository so linked worktrees stay within one
+    // project; workspaceId is the compatibility fallback for an older bridge.
+    var agents = selected === ALL_HERDR ? herdrAgents
+               : selected === ALL_RC ? rcAgents
+               : herdrAgents.concat(rcAgents).filter(function (a) {
+                   return inProject(a, selected);
+                 });
     if (!agents.length) {
       cardCache = { cells: '', html: {} };
       grid.innerHTML = '<div class="empty">' +
         (d.herdr && d.herdr.ok ? 'no agents running' : esc(d.herdr && d.herdr.detail || 'herdr unavailable')) +
         '</div>';
-    } else if (selected === 'all') {
-      // The whole board, gaps included — the arrangement is of every card at once.
+    } else if (isBoard(selected)) {
+      // The whole board, gaps included — the arrangement is of every card on it at once.
       patchCards(cellsFor(agents));
     } else {
       // Filtered to one project, the other projects' cells aren't yours to look at, so
       // their holes would just be dead space. Cards pack up in slot order instead, and
-      // a drag still trades two cards' slots, which means the same thing in both views.
+      // a drag still trades two cards' slots, which means the same thing in both views
+      // (between two cards of the same board; a pane and a thread stay where they are).
       patchCards(agents);
     }
     renderFooter(d);
@@ -1812,42 +1835,6 @@
     pollLaptopAero();
   }
 
-  var lastNextPane = null;
-
-  function cardForPane(paneId) {
-    var cards = grid.querySelectorAll('.card');
-    for (var i = 0; i < cards.length; i++) {
-      if (cards[i].getAttribute('data-pane') === paneId) return cards[i];
-    }
-    return null;
-  }
-
-  function jumpToNext() {
-    if (!last) return;
-    var queue = attentionQueue(placeAgents(last.agents || []));
-    if (!queue.length) return;
-
-    // Start after the last jump and skip the already-focused card when another choice
-    // exists. This makes repeated presses cycle rather than sticking on one blocked pane.
-    var previous = queue.findIndex(function (a) { return a.paneId === lastNextPane; });
-    var target = null;
-    for (var step = 1; step <= queue.length; step++) {
-      var candidate = queue[(previous + step) % queue.length];
-      if (queue.length === 1 || !candidate.focused) { target = candidate; break; }
-    }
-    target = target || queue[(previous + 1) % queue.length];
-    lastNextPane = target.paneId;
-
-    selected = 'all';
-    render(last);
-    requestAnimationFrame(function () {
-      var card = cardForPane(target.paneId);
-      if (!card) return;
-      card.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
-      act(card, 'api/focus', { paneId: target.paneId });
-    });
-  }
-
   // Tap a card → focus that agent. Herdr switches workspace on its own when the
   // target pane lives in another one, so this doubles as a cross-space jump.
   grid.addEventListener('click', function (e) {
@@ -1918,7 +1905,7 @@
   }
 
   function openDragRow() {
-    if (selected !== 'all') return;
+    if (!isBoard(selected)) return;
     var slot = grid.children.length;
     var cols = columnCount(), rows = spareRowCount(cols);
     for (var r = 0; r < rows; r++) {
@@ -2066,8 +2053,6 @@
     selected = pill.getAttribute('data-ws');
     if (last) render(last);
   });
-
-  nextAction.addEventListener('click', jumpToNext);
 
   newTabAction.addEventListener('click', function () {
     if (!newTabWorkspaceId || creatingTab) return;
