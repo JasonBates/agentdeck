@@ -950,12 +950,14 @@
   var age = document.getElementById('age');
   var bridgeState = document.getElementById('bridgeState');
   var lastMsg = 0;
-  // The deck holds two boards, one of Herdr panes and one of remote-control threads
-  // (the phone and claude.ai ones), each with its own All pill. Their ids can't be
-  // mistaken for a project's, which are Herdr workspace ids or repo keys.
-  var ALL_HERDR = ':herdr', ALL_RC = ':rc';
+  // The deck holds three boards: one of Herdr panes, one of remote-control threads (the
+  // phone and claude.ai ones), and a mixed one holding both. The mixed board is arranged
+  // on its own, so a card has a cell on its own board and another on the mixed one, and
+  // moving it on one leaves it where it was on the other. Their ids can't be mistaken
+  // for a project's, which are Herdr workspace ids or repo keys.
+  var ALL_HERDR = ':herdr', ALL_RC = ':rc', ALL = ':all';
   function isRemote(paneId) { return String(paneId).indexOf('rc:') === 0; }
-  function isBoard(id) { return id === ALL_HERDR || id === ALL_RC; }
+  function isBoard(id) { return id === ALL_HERDR || id === ALL_RC || id === ALL; }
   var selected = ALL_HERDR;   // which pill is filtering the grid
   var last = null;        // last payload, so a pill tap can re-render without waiting
   var newTabWorkspaceId = null;
@@ -978,25 +980,46 @@
     } catch (e) {}
   }
 
-  function saveSlots() {
-    try { localStorage.setItem('agentdeck.slots', JSON.stringify(slots)); } catch (e) {}
+  // The mixed board's cells, kept apart from the two boards'. The first time it opens it
+  // is the Herdr board you already know, with the threads taking the first free cells.
+  var mixedSlots = null;
+  try { mixedSlots = JSON.parse(localStorage.getItem('agentdeck.mixedSlots') || 'null'); }
+  catch (e) {}
+  if (!mixedSlots) {
+    mixedSlots = {};
+    Object.keys(slots).forEach(function (id) {
+      if (!isRemote(id)) mixedSlots[id] = slots[id];
+    });
   }
+
+  function saveSlots() {
+    try {
+      localStorage.setItem('agentdeck.slots', JSON.stringify(slots));
+      localStorage.setItem('agentdeck.mixedSlots', JSON.stringify(mixedSlots));
+    } catch (e) {}
+  }
+
+  // The cells a drag in the current view moves. A project view packs its cards in the
+  // separate boards' order, so a drag there trades cells on those.
+  function slotsInView() { return selected === ALL ? mixedSlots : slots; }
 
   // Drop onto empty space: the card takes that cell and leaves its own behind.
   function placeInSlot(dragId, slot) {
-    slots[dragId] = slot;
+    slotsInView()[dragId] = slot;
     saveSlots();
   }
 
   // Drop onto another card: they trade cells. Sliding a whole run of cards along to
   // make room is what the gaps exist to avoid, so nothing else on the board moves.
   // The two boards number their cells separately, so a phone thread and a Herdr pane
-  // side by side in a project view have no cells to trade.
+  // side by side in a project view have no cells to trade. The mixed board numbers
+  // them together, so there they trade like any two cards.
   function swapSlots(dragId, targetId) {
-    if (isRemote(dragId) !== isRemote(targetId)) return;
-    var a = slots[dragId], b = slots[targetId];
+    var map = slotsInView();
+    if (map === slots && isRemote(dragId) !== isRemote(targetId)) return;
+    var a = map[dragId], b = map[targetId];
     if (typeof a !== 'number' || typeof b !== 'number') return;
-    slots[dragId] = b; slots[targetId] = a;
+    map[dragId] = b; map[targetId] = a;
     saveSlots();
   }
 
@@ -1009,12 +1032,15 @@
     if (!herdrOK) return;
     var live = {};
     agents.forEach(function (a) { live[a.paneId] = true; });
-    var freed = false;
-    Object.keys(slots).forEach(function (id) {
+    var freed = false, held = {};
+    Object.keys(slots).concat(Object.keys(mixedSlots)).forEach(function (id) {
+      held[id] = true;
+    });
+    Object.keys(held).forEach(function (id) {
       if (live[id]) { delete absences[id]; return; }
       absences[id] = (absences[id] || 0) + 1;
       if (absences[id] >= FORGET_AFTER) {
-        delete slots[id]; delete absences[id]; freed = true;
+        delete slots[id]; delete mixedSlots[id]; delete absences[id]; freed = true;
       }
     });
     if (freed) saveSlots();
@@ -1025,10 +1051,14 @@
   // open refills the board instead of stretching it — the deck stays as tall as the
   // cards need. Slots are numbered along the flow, so scanning up from zero is a
   // top-row-down, left-to-right scan at whatever width the deck is being read at.
-  // One board at a time: `remote` says which, so only that board's cells count as taken.
-  function placeAgents(agents, remote) {
+  // One board at a time: `map` holds its cells and `owns` says which ids in it are its
+  // cards, since the Herdr and RC boards share one table and only a board's own cells
+  // count as taken.
+  function onHerdr(id) { return !isRemote(id); }
+  function onMixed() { return true; }
+  function placeAgents(agents, map, owns) {
     var ordered = agents.slice().sort(function (a, b) {
-      var x = slots[a.paneId], y = slots[b.paneId];
+      var x = map[a.paneId], y = map[b.paneId];
       if (typeof x !== 'number') x = Infinity;
       if (typeof y !== 'number') y = Infinity;
       return x - y;
@@ -1038,8 +1068,8 @@
     // can't be handed a cell a card further down the sort still holds — one race
     // shouldn't shunt a run of cards along.
     var claimed = {};
-    Object.keys(slots).forEach(function (id) {
-      if (isRemote(id) === remote) claimed[slots[id]] = true;
+    Object.keys(map).forEach(function (id) {
+      if (owns(id)) claimed[map[id]] = true;
     });
 
     // Two ways to find a cell. A new pane takes the first one with no card in it,
@@ -1050,7 +1080,7 @@
     // cell they hand out is occupied from that moment on.
     var taken = {}, vacant = 0, unclaimed = 0, changed = false;
     ordered.forEach(function (a) {
-      var s = slots[a.paneId];
+      var s = map[a.paneId];
       if (typeof s !== 'number') {                 // a pane that has just appeared
         while (taken[vacant]) vacant++;
         s = vacant;
@@ -1061,7 +1091,7 @@
         taken[s] = true;
         return;
       }
-      slots[a.paneId] = s;
+      map[a.paneId] = s;
       claimed[s] = true;
       taken[s] = true;
       changed = true;
@@ -1070,7 +1100,7 @@
     // Sorted again on the slots as they finished up: a pane that just dropped into a
     // gap belongs where the gap was, and the filtered view reads this order as the
     // order of the deck.
-    return ordered.sort(function (a, b) { return slots[a.paneId] - slots[b.paneId]; });
+    return ordered.sort(function (a, b) { return map[a.paneId] - map[b.paneId]; });
   }
 
   // How many cards the panel fits across right now, read off the resolved grid rather
@@ -1089,11 +1119,11 @@
   // would silently stop drawing a card that sat beyond it, so the ceiling lives on the
   // spare row, which is the only place slot numbers can run away.
   var MAX_CELLS = 240;
-  function cellsFor(agents) {
+  function cellsFor(agents, map) {
     var occupant = {}, lastSlot = 0;
     agents.forEach(function (a) {
-      occupant[slots[a.paneId]] = a;
-      lastSlot = Math.max(lastSlot, slots[a.paneId]);
+      occupant[map[a.paneId]] = a;
+      lastSlot = Math.max(lastSlot, map[a.paneId]);
     });
     var cols = columnCount();
     var total = (Math.floor(lastSlot / cols) + 1) * cols;
@@ -1178,7 +1208,7 @@
 
   // A phone thread joins the project it is working in: the deepest one whose Herdr
   // cards sit in the thread's folder or above it, or else the one named after the
-  // folder. A thread outside every project lives in All RC alone.
+  // folder. A thread outside every project lives in RC alone.
   function projectFor(a, ws) {
     var cwd = String(a.cwd || ''), best = null, depth = -1;
     Object.keys(projectDirs).forEach(function (id) {
@@ -1257,10 +1287,12 @@
     }
 
     releaseDeadSlots(all, d.herdr && d.herdr.ok);
-    herdrAgents = placeAgents(herdrAgents, false);
-    rcAgents = placeAgents(rcAgents, true);
-    pills.innerHTML = pill(ALL_HERDR, 'All Herdr', tally(herdrAgents, false)) +
-      pill(ALL_RC, 'All RC', tally(rcAgents, false)) +
+    herdrAgents = placeAgents(herdrAgents, slots, onHerdr);
+    rcAgents = placeAgents(rcAgents, slots, isRemote);
+    var mixedAgents = placeAgents(all, mixedSlots, onMixed);
+    pills.innerHTML = pill(ALL, 'Herdr+RC', tally(mixedAgents, false)) +
+      pill(ALL_HERDR, 'Herdr', tally(herdrAgents, false)) +
+      pill(ALL_RC, 'RC', tally(rcAgents, false)) +
       ws.map(function (w) {
         return pill(w.id, w.label, tally(herdrAgents.concat(rcAgents).filter(function (a) {
           return inProject(a, w.id);
@@ -1281,6 +1313,7 @@
     // project; workspaceId is the compatibility fallback for an older bridge.
     var agents = selected === ALL_HERDR ? herdrAgents
                : selected === ALL_RC ? rcAgents
+               : selected === ALL ? mixedAgents
                : herdrAgents.concat(rcAgents).filter(function (a) {
                    return inProject(a, selected);
                  });
@@ -1291,7 +1324,7 @@
         '</div>';
     } else if (isBoard(selected)) {
       // The whole board, gaps included — the arrangement is of every card on it at once.
-      patchCards(cellsFor(agents));
+      patchCards(cellsFor(agents, slotsInView()));
     } else {
       // Filtered to one project, the other projects' cells aren't yours to look at, so
       // their holes would just be dead space. Cards pack up in slot order instead, and
