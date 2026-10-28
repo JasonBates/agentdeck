@@ -100,6 +100,8 @@ final class HTTPServer {
 
     /// Handlers supplied by main.
     var onFocus: ((String) -> Bool)?
+    /// Focus asked for by the laptop deck, which opens a phone thread on the laptop.
+    var onLaptopFocus: ((String) -> Bool)?
     var onWorkspace: ((String) -> Bool)?
     var onCreateTab: ((String) -> Bool)?
     var onAeroSpaceWorkspace: ((String) -> Bool)?
@@ -322,7 +324,13 @@ final class HTTPServer {
             openStream(conn)
 
         case ("POST", "/api/focus"):
-            act(conn, body: body, key: "paneId", kind: "pane", handler: onFocus)
+            let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+            if obj?["on"] as? String == "laptop" {
+                act(conn, body: body, key: "paneId", kind: "pane", handler: onLaptopFocus,
+                    actionQueue: laptopActions)
+            } else {
+                act(conn, body: body, key: "paneId", kind: "pane", handler: onFocus)
+            }
 
         case ("POST", "/api/workspace"):
             act(conn, body: body, key: "workspaceId", kind: "workspace", handler: onWorkspace)

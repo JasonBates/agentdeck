@@ -129,24 +129,44 @@ let tabTitleSync: TabTitleSync? = {
     return TabTitleSync { tab, title in try src.rename(tab: tab, title: title) }
 }()
 
+// A phone thread has no pane: open it in the Claude app, or on claude.ai/code in the
+// browser when the app can't take it. `open` runs the command on the Mac doing the
+// opening, given the link.
+func openThread(_ pane: String, open: (String) -> Bool) -> Bool {
+    let id = String(pane.dropFirst(RemoteThread.panePrefix.count))
+    let thread = RemoteThread(sessionId: id, transcriptId: "", cwd: "")
+    let opened = [thread.appURL, thread.url].compactMap { $0 }.contains { url in
+        open(url.absoluteString)
+    }
+    guard opened else { return false }
+    remoteThreads?.markOpened(pane: pane)
+    return true
+}
+
 server.onFocus = { pane in
-    // A phone thread has no pane: open it in the Claude app, or on claude.ai/code in the
-    // desktop's browser when the app can't take it.
     if pane.hasPrefix(RemoteThread.panePrefix) {
-        let id = String(pane.dropFirst(RemoteThread.panePrefix.count))
-        let thread = RemoteThread(sessionId: id, transcriptId: "", cwd: "")
-        let opened = [thread.appURL, thread.url].compactMap { $0 }.contains { url in
-            (try? Shell.run("/usr/bin/open", [url.absoluteString])) != nil
-        }
-        guard opened else { return false }
-        remoteThreads?.markOpened(pane: pane)
-        return true
+        return openThread(pane) { url in (try? Shell.run("/usr/bin/open", [url])) != nil }
     }
     guard let src = source else { return false }
     do { try src.focus(pane: pane); return true }
     catch {
         FileHandle.standardError.write(Data("focus failed: \(error)\n".utf8))
         return false
+    }
+}
+
+// The laptop deck's taps. Herdr runs here and the laptop attaches to it, so a pane is
+// focused as usual; a thread opens in the laptop's Claude app over the `laptop` alias.
+// The link passes through the laptop's shell, so a thread id is held to letters, digits
+// and underscores before it gets there.
+server.onLaptopFocus = { pane in
+    guard pane.hasPrefix(RemoteThread.panePrefix) else { return server.onFocus?(pane) ?? false }
+    let id = pane.dropFirst(RemoteThread.panePrefix.count)
+    guard !id.isEmpty, id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") })
+    else { return false }
+    return openThread(pane) { url in
+        (try? Shell.run("/usr/bin/ssh", RemoteAeroSpace.sshArguments + ["open '\(url)'"],
+                        timeout: 8)) != nil
     }
 }
 

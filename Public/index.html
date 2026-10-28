@@ -1869,11 +1869,14 @@
   }
 
   // Tap a card → focus that agent. Herdr switches workspace on its own when the
-  // target pane lives in another one, so this doubles as a cross-space jump.
+  // target pane lives in another one, so this doubles as a cross-space jump. The laptop
+  // deck says so, and a phone thread then opens in the laptop's Claude app.
   grid.addEventListener('click', function (e) {
     if (Date.now() - droppedAt < DROP_CLICK_MS) return;   // that tap was a drag
     var card = e.target.closest ? e.target.closest('.card') : null;
-    if (card) act(card, 'api/focus', { paneId: card.getAttribute('data-pane') });
+    if (card) act(card, 'api/focus', laptopAero
+      ? { paneId: card.getAttribute('data-pane'), on: 'laptop' }
+      : { paneId: card.getAttribute('data-pane') });
   });
 
   // ---- drag to rearrange -------------------------------------------------
