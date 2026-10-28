@@ -28,8 +28,11 @@ from Omarchy/Quickshell to macOS.
 - Per card: a stable session title, the step now underway, the latest outcome, the
   agent's own phase line, context-window fill, background shells and subagents still
   running, and whether the reply landed since you last looked.
-- **Next** cycles through blocked agents and unread finished replies. **+** opens a new
-  Herdr tab in the selected project. Long-press and drag arranges the board per device.
+- Three boards: **Herdr** for panes, **RC** for remote-control threads, and **Herdr+RC**
+  for both. Each keeps its own arrangement per device, so a card can sit in one place on
+  Herdr+RC and another on its own board; long-press and drag to arrange. Project pills
+  filter across both, with a thread under the project it is working in. **+** opens a
+  new Herdr tab in the selected project.
 - An accepted title also becomes the Herdr tab label, so the sidebar and the deck agree.
   A Claude session renamed with `/rename` keeps that name as its title; the model then
   writes only the subtitle and outcome. `/rename auto` hands the title back to the model.
@@ -289,7 +292,9 @@ The standard installation also serves `/deck2/`. It shows the same Studio agents
 metrics, with a **Laptop** AeroSpace row. The bridge reads and switches workspaces
 through `ssh laptop`; configure that alias and key-based SSH access on the bridge's
 host. AeroSpace must be running in the laptop's logged-in session. AgentDeck itself
-stays on the Studio; nothing is installed on the laptop.
+stays on the Studio; nothing is installed on the laptop. Tapping a thread card here
+opens it in the laptop's Claude app over the same alias; a Herdr card focuses its pane
+as on `/deck`.
 
 For a preview or a custom public path, append `?aerospace=laptop` to the page URL.
 The laptop row uses an AeroSpace event subscription over a persistent SSH connection

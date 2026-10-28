@@ -215,8 +215,10 @@ size and mtime.
   ever changes. What there is instead is validation: an id in a POST body must name a
   pane or workspace in the last Herdr snapshot and look like one (short, printable, not a
   flag) before it reaches `herdr` argv, and `/api/tab` is paced to one a second.
-- Card arrangement is per-device `localStorage` (`agentdeck.slots`, a paneId → cell map)
-  keyed by `paneId`, and pane ids do not survive a Herdr restart — sessions do, panes
+- Card arrangement is per-device `localStorage`, a paneId → cell map per board:
+  `agentdeck.slots` holds the Herdr and RC boards, which number their cells separately,
+  and `agentdeck.mixedSlots` holds Herdr+RC, so a card's place there is independent of
+  its place on its own board. The map is keyed by `paneId`, and pane ids do not survive a Herdr restart — sessions do, panes
   don't. A Herdr restart scrambles a saved layout. Keying on session id would survive it,
   at the cost of losing the arrangement when a session is resumed into a new pane.
 - A slot is a position along the grid flow, not a row and column, so a rotate keeps every
@@ -229,8 +231,8 @@ size and mtime.
   The cost is that a pane which blinks out and comes back can find its cell taken and be
   moved on, which needs a hiccup and a new tab inside the same few seconds.
 - Filtering to a project packs the cards up instead of showing the other projects' empty
-  cells. A drag there trades two cards' slots, which means the same thing in both views,
-  but you can only place a card into free space from **All**.
+  cells. A drag there trades two cards' slots on their own board, and only between two
+  cards of the same kind; you can only place a card into free space from **Herdr**,
+  **RC** or **Herdr+RC**.
 - The **ask** row is model judgement about whether a reply is waiting on you, and it
-  does not feed the Next queue or the pills — only Herdr's own blocked state does. If
-  it proves reliable, the queue is the obvious next place for it.
+  does not feed the pills — only Herdr's own blocked state does.
